@@ -109,7 +109,7 @@ async fn oversized_image_request_uses_http_without_sending_or_retrying_websocket
     let prompt = prompt_with_input(vec![image_message]);
     let mut session = harness.client.new_session();
     tokio::time::timeout(
-        Duration::from_secs(20),
+        Duration::from_secs(/*secs*/ 20),
         stream_until_complete_with_model_info(
             &mut session,
             &harness,
