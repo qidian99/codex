@@ -465,6 +465,8 @@ fn responses_request_properties_mismatch(
 
     // Stream options control delivery for this response, not the context
     // referenced by `previous_response_id`.
+    // Verbosity also applies only to the new response. Changing it must not resend historical
+    // images; changes to the output schema still require a full request.
     let reason = if previous_model != current_model {
         "model_changed"
     } else if previous_tools != current_tools {
@@ -485,7 +487,9 @@ fn responses_request_properties_mismatch(
         "service_tier_changed"
     } else if previous_prompt_cache_key != current_prompt_cache_key {
         "prompt_cache_key_changed"
-    } else if previous_text != current_text {
+    } else if previous_text.as_ref().and_then(|text| text.format.as_ref())
+        != current_text.as_ref().and_then(|text| text.format.as_ref())
+    {
         "text_changed"
     } else {
         return None;
@@ -2266,6 +2270,10 @@ impl ModelClientSession {
                     Some(Arc::clone(&self.turn_state)),
                 )
                 .await;
+            if let Err(ApiError::WebsocketRequestTooLarge { size, limit }) = &stream_result {
+                tracing::info!(size, limit, "using HTTP for oversized websocket request");
+                return Ok(WebsocketStreamOutcome::FallbackToHttp);
+            }
             if let Some(original_item_ids) = original_item_ids {
                 for (item, original_item_id) in request.input.iter_mut().zip(original_item_ids) {
                     item.set_id(original_item_id);

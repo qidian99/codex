@@ -378,3 +378,73 @@ async fn bounds_cache_by_encoded_byte_size() {
     assert!(cache.get(&key(2)).is_some());
     assert!(cache.get(&key(3)).is_none());
 }
+
+#[test]
+fn optimizes_large_png_without_changing_pixels_or_metadata() {
+    let image = ImageBuffer::from_fn(640, 480, |x, y| {
+        Rgba([x as u8, y as u8, (x ^ y) as u8, (x / 3) as u8])
+    });
+    let mut original = image_bytes_with_metadata(&image, ImageFormat::Png, TEST_RGB_ICC_PROFILE);
+    // Trailing bytes are legal input to the decoder and must not become permanent upload cost.
+    original.resize(original.len() + PNG_OPTIMIZATION_THRESHOLD_BYTES, 0);
+    let prepared = load_for_prompt_bytes(
+        Path::new("screenshot.png"),
+        original.clone(),
+        PromptImageMode::HIGH_DETAIL,
+    )
+    .expect("prepare screenshot");
+    assert!(prepared.bytes.len() < original.len());
+    pretty_assertions::assert_eq!(
+        image::load_from_memory(&prepared.bytes)
+            .expect("decode optimized screenshot")
+            .to_rgba8(),
+        image
+    );
+    let format = image::guess_format(&prepared.bytes).expect("output format");
+    let mut decoder = ImageReader::with_format(Cursor::new(&prepared.bytes), format)
+        .into_decoder()
+        .expect("output decoder");
+    pretty_assertions::assert_eq!(
+        (
+            decoder.icc_profile().unwrap(),
+            decoder.exif_metadata().unwrap()
+        ),
+        (
+            Some(TEST_RGB_ICC_PROFILE.to_vec()),
+            Some(ROTATE_90_EXIF.to_vec())
+        )
+    );
+    let original_mode = load_for_prompt_bytes(
+        Path::new("screenshot.png"),
+        original.clone(),
+        PromptImageMode::Original,
+    )
+    .expect("preserve original screenshot");
+    pretty_assertions::assert_eq!(original_mode.bytes.as_ref(), original);
+}
+
+#[test]
+fn large_png_encoding_preserves_transparent_pixels_and_never_grows() {
+    let image = DynamicImage::ImageRgba8(ImageBuffer::from_fn(640, 480, |x, y| {
+        let noise = x.wrapping_mul(1_664_525) ^ y.wrapping_mul(1_013_904_223);
+        Rgba([
+            noise as u8,
+            (noise >> 8) as u8,
+            (noise >> 16) as u8,
+            (y % 3) as u8,
+        ])
+    }));
+    let source = image_bytes(&image.to_rgba8(), ImageFormat::Png);
+    assert!(source.len() > PNG_OPTIMIZATION_THRESHOLD_BYTES);
+    let prepared = load_for_prompt_bytes(
+        Path::new("transparent.png"),
+        source.clone(),
+        PromptImageMode::HIGH_DETAIL,
+    )
+    .expect("prepare transparent image");
+    assert!(prepared.bytes.len() <= source.len());
+    pretty_assertions::assert_eq!(
+        image::load_from_memory(&prepared.bytes).unwrap().to_rgba8(),
+        image.to_rgba8()
+    );
+}

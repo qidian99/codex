@@ -24,6 +24,7 @@ tokio = { workspace = true, features = ["fs", "rt", "rt-multi-thread", "macros"]
 [dev-dependencies]
 divan = { workspace = true }
 image = { workspace = true, features = ["jpeg", "png", "gif", "webp"] }
+pretty_assertions = { workspace = true }
 
 [lib]
 doctest = false
