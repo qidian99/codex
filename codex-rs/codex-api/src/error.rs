@@ -15,6 +15,9 @@ pub enum ApiError {
     Api { status: StatusCode, message: String },
     #[error("stream error: {0}")]
     Stream(String),
+    /// The serialized request cannot fit in a Responses WebSocket message. Use HTTP instead.
+    #[error("websocket request is too large ({size} bytes; limit {limit} bytes)")]
+    WebsocketRequestTooLarge { size: usize, limit: usize },
     #[error("stream error: Incomplete response returned, reason: content_filter")]
     ContentFilter,
     #[error(transparent)]

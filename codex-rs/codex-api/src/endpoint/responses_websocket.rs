@@ -111,6 +111,13 @@ impl WsStream {
                             | Message::Close(_)
                             | Message::Frame(_))) => {
                                 let is_close = matches!(message, Message::Close(_));
+                                if let Message::Close(Some(frame)) = &message {
+                                    tracing::warn!(
+                                        close_code = u16::from(frame.code),
+                                        close_reason = %frame.reason,
+                                        "responses websocket closed by peer"
+                                    );
+                                }
                                 if tx_message.send(Ok(message)).is_err() {
                                     break;
                                 }
@@ -1054,6 +1061,7 @@ fn safety_buffering_for_event(
     event.safety_buffering(treatment)
 }
 
+#[instrument(level = "info", skip_all, fields(request_bytes = request_text.len(), connection_reused))]
 async fn send_websocket_request(
     ws_stream: &mut WsStream,
     request_text: String,
@@ -1070,6 +1078,12 @@ async fn send_websocket_request(
     .map_err(|_| ApiError::Stream("idle timeout sending websocket request".into()))
     .and_then(|result| result.map_err(map_ws_stream_error));
 
+    info!(
+        upload_duration_ms = request_start.elapsed().as_millis() as u64,
+        success = result.is_ok(),
+        "websocket request upload finished"
+    );
+
     if let Some(t) = telemetry.as_ref() {
         t.on_ws_request(
             request_start.elapsed(),
@@ -1084,8 +1098,18 @@ async fn send_websocket_request(
 }
 
 fn serialize_websocket_request(request: &ResponsesWsRequest<'_>) -> Result<String, ApiError> {
-    serde_json::to_string(request)
-        .map_err(|err| ApiError::Stream(format!("failed to encode websocket request: {err}")))
+    // The peer's message limit applies before compression. Retrying the same oversized history
+    // cannot succeed, even if permessage-deflate makes the wire payload small.
+    const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
+    let text = serde_json::to_string(request)
+        .map_err(|err| ApiError::Stream(format!("failed to encode websocket request: {err}")))?;
+    if text.len() >= MAX_REQUEST_BYTES {
+        return Err(ApiError::WebsocketRequestTooLarge {
+            size: text.len(),
+            limit: MAX_REQUEST_BYTES,
+        });
+    }
+    Ok(text)
 }
 
 #[cfg(test)]

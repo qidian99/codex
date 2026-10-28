@@ -30,6 +30,9 @@ pub const MAX_DIMENSION: u32 = 2048;
 /// requirement or target upload size.
 pub const MAX_PROMPT_IMAGE_INPUT_BYTES: usize = 1024 * 1024 * 1024;
 const MAX_IMAGE_CACHE_BYTES: usize = 64 * 1024 * 1024;
+// Small attachments do not justify an additional encode. Large PNG screenshots can dominate
+// every full-history request even when their dimensions already fit the model's budget.
+const PNG_OPTIMIZATION_THRESHOLD_BYTES: usize = 256 * 1024;
 
 pub mod error;
 
@@ -194,6 +197,22 @@ fn load_for_prompt_bytes_uncached(
             }
         } else {
             if let Some(format) = format.filter(|format| can_preserve_source_bytes(*format)) {
+                if format == ImageFormat::Png
+                    && mode != PromptImageMode::Original
+                    && file_bytes.len() > PNG_OPTIMIZATION_THRESHOLD_BYTES
+                    && matches!(dynamic.color(), ColorType::Rgb8 | ColorType::Rgba8)
+                    && let Ok((bytes, output_format)) = encode_image(&dynamic, format, metadata)
+                    && bytes.len() < file_bytes.len()
+                {
+                    return Ok(EncodedImage {
+                        bytes: bytes.into(),
+                        mime: format_to_mime(output_format),
+                        source_width: width,
+                        source_height: height,
+                        width,
+                        height,
+                    });
+                }
                 let mime = format_to_mime(format);
                 EncodedImage {
                     bytes: file_bytes.into(),
@@ -377,7 +396,11 @@ fn encode_image(
     match target_format {
         ImageFormat::Png => {
             let rgba = image.to_rgba8();
-            let mut encoder = PngEncoder::new(&mut buffer);
+            let mut encoder = PngEncoder::new_with_quality(
+                &mut buffer,
+                image::codecs::png::CompressionType::Default,
+                image::codecs::png::FilterType::Adaptive,
+            );
             apply_image_metadata(&mut encoder, icc_profile, exif, target_format)?;
             encoder
                 .write_image(
