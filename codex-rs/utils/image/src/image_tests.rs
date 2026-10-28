@@ -6,6 +6,7 @@ use image::ImageBuffer;
 use image::ImageDecoder;
 use image::Rgba;
 use image::metadata::Orientation;
+use pretty_assertions::assert_eq;
 
 const TEST_RGB_ICC_PROFILE: &[u8] = b"0123456789abcdefRGB ";
 const TEST_CMYK_ICC_PROFILE: &[u8] = b"0123456789abcdefCMYK";
@@ -381,12 +382,15 @@ async fn bounds_cache_by_encoded_byte_size() {
 
 #[test]
 fn optimizes_large_png_without_changing_pixels_or_metadata() {
-    let image = ImageBuffer::from_fn(640, 480, |x, y| {
+    let image = ImageBuffer::from_fn(/*width*/ 640, /*height*/ 480, |x, y| {
         Rgba([x as u8, y as u8, (x ^ y) as u8, (x / 3) as u8])
     });
     let mut original = image_bytes_with_metadata(&image, ImageFormat::Png, TEST_RGB_ICC_PROFILE);
     // Trailing bytes are legal input to the decoder and must not become permanent upload cost.
-    original.resize(original.len() + PNG_OPTIMIZATION_THRESHOLD_BYTES, 0);
+    original.resize(
+        original.len() + PNG_OPTIMIZATION_THRESHOLD_BYTES,
+        /*value*/ 0,
+    );
     let prepared = load_for_prompt_bytes(
         Path::new("screenshot.png"),
         original.clone(),
@@ -394,7 +398,7 @@ fn optimizes_large_png_without_changing_pixels_or_metadata() {
     )
     .expect("prepare screenshot");
     assert!(prepared.bytes.len() < original.len());
-    pretty_assertions::assert_eq!(
+    assert_eq!(
         image::load_from_memory(&prepared.bytes)
             .expect("decode optimized screenshot")
             .to_rgba8(),
@@ -404,7 +408,7 @@ fn optimizes_large_png_without_changing_pixels_or_metadata() {
     let mut decoder = ImageReader::with_format(Cursor::new(&prepared.bytes), format)
         .into_decoder()
         .expect("output decoder");
-    pretty_assertions::assert_eq!(
+    assert_eq!(
         (
             decoder.icc_profile().unwrap(),
             decoder.exif_metadata().unwrap()
@@ -420,20 +424,25 @@ fn optimizes_large_png_without_changing_pixels_or_metadata() {
         PromptImageMode::Original,
     )
     .expect("preserve original screenshot");
-    pretty_assertions::assert_eq!(original_mode.bytes.as_ref(), original);
+    assert_eq!(original_mode.bytes.as_ref(), original);
 }
 
 #[test]
 fn large_png_encoding_preserves_transparent_pixels_and_never_grows() {
-    let image = DynamicImage::ImageRgba8(ImageBuffer::from_fn(640, 480, |x, y| {
-        let noise = x.wrapping_mul(1_664_525) ^ y.wrapping_mul(1_013_904_223);
-        Rgba([
-            noise as u8,
-            (noise >> 8) as u8,
-            (noise >> 16) as u8,
-            (y % 3) as u8,
-        ])
-    }));
+    let image = DynamicImage::ImageRgba8(ImageBuffer::from_fn(
+        /*width*/ 640,
+        /*height*/ 480,
+        |x, y| {
+            let noise =
+                x.wrapping_mul(/*rhs*/ 1_664_525) ^ y.wrapping_mul(/*rhs*/ 1_013_904_223);
+            Rgba([
+                noise as u8,
+                (noise >> 8) as u8,
+                (noise >> 16) as u8,
+                (y % 3) as u8,
+            ])
+        },
+    ));
     let source = image_bytes(&image.to_rgba8(), ImageFormat::Png);
     assert!(source.len() > PNG_OPTIMIZATION_THRESHOLD_BYTES);
     let prepared = load_for_prompt_bytes(
@@ -443,7 +452,7 @@ fn large_png_encoding_preserves_transparent_pixels_and_never_grows() {
     )
     .expect("prepare transparent image");
     assert!(prepared.bytes.len() <= source.len());
-    pretty_assertions::assert_eq!(
+    assert_eq!(
         image::load_from_memory(&prepared.bytes).unwrap().to_rgba8(),
         image.to_rgba8()
     );
