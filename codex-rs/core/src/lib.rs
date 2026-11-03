@@ -104,6 +104,7 @@ pub mod guardian_review;
 mod hook_environment_executor;
 mod hook_mcp_executor;
 mod hook_runtime;
+mod image_file_cache;
 mod image_preparation;
 mod installation_id;
 pub(crate) mod mcp;
