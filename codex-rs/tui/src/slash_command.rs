@@ -39,6 +39,7 @@ pub enum SlashCommand {
     App,
     Init,
     Compact,
+    #[strum(to_string = "cp", serialize = "listcp")]
     Cp,
     Usecp,
     Rmcp,
@@ -96,7 +97,7 @@ impl SlashCommand {
     /// User-visible description shown in the popup.
     pub fn description(self) -> &'static str {
         match self {
-            SlashCommand::Cp => "save conversation context as a named checkpoint",
+            SlashCommand::Cp => "manage checkpoints, or /cp NAME to save one",
             SlashCommand::Usecp => "continue from a checkpoint, keeping displayed messages",
             SlashCommand::Rmcp => "delete a named conversation checkpoint",
             SlashCommand::Rmallcp => "delete all checkpoints for this session",

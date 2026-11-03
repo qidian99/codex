@@ -170,7 +170,7 @@ impl Session {
                     active_branch_id: None,
                 });
                 format!(
-                    "Frozen checkpoint '{name}': each new feedback starts here. Ctrl+C when idle returns to the main conversation."
+                    "Frozen checkpoint '{name}': each new question starts from this checkpoint. Replies stay visible and are saved automatically. Press Ctrl+C when idle to return to the main conversation; /cp lists checkpoints and saved feedback."
                 )
             }
             "unfreeze" => {
@@ -180,7 +180,7 @@ impl Session {
                     .context("No frozen checkpoint is active.")?;
                 let mut items = frozen.main_items.clone();
                 let mut summary = format!(
-                    "Returned from frozen checkpoint '{}'. Feedback branches are stored in {}. Inspect/export with codexctl checkpoint SESSION; use thread/checkpoint read_branch or use_branch with the branch ID.\n",
+                    "Returned from frozen checkpoint '{}'. Use /cp to view saved feedback and replies. Saved data: {}.\n",
                     frozen.checkpoint.name,
                     path.display()
                 );
@@ -226,7 +226,17 @@ impl Session {
             }
             "status" => "Checkpoint status.".to_string(),
             "list" => {
-                data = serde_json::to_value(&store)?;
+                data = serde_json::json!({
+                    "version": store.version,
+                    "checkpoints": store.checkpoints.iter().map(|(key, cp)| (key.clone(), serde_json::json!({
+                        "id": cp.id, "name": cp.name, "created_at": cp.created_at,
+                    }))).collect::<BTreeMap<_, _>>(),
+                    "branches": store.branches.iter().map(|(key, branch)| (key.clone(), serde_json::json!({
+                        "id": branch.id, "checkpoint_id": branch.checkpoint_id,
+                        "checkpoint_name": branch.checkpoint_name, "feedback": branch.feedback,
+                        "created_at": branch.created_at, "status": branch.status,
+                    }))).collect::<BTreeMap<_, _>>(),
+                });
                 "Conversation checkpoints and branches.".to_string()
             }
             "read_branch" => {
@@ -492,6 +502,9 @@ async fn read_store(path: &std::path::Path) -> anyhow::Result<CheckpointStore> {
     Ok(store)
 }
 async fn write_store(path: &std::path::Path, store: &CheckpointStore) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
     let temp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
     let mut options = tokio::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);

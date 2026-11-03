@@ -828,14 +828,23 @@ impl App {
                 );
                 Ok(true)
             }
-            AppCommand::Checkpoint { action, name } => {
-                let response = app_server
-                    .thread_checkpoint(thread_id, action.clone(), name.clone())
-                    .await?;
-                self.chat_widget.set_frozen_checkpoint(response.frozen);
-                if action != "status" {
-                    self.chat_widget.add_info_message(response.message, None);
+            AppCommand::Checkpoint {
+                action,
+                name,
+                prompt,
+            } => {
+                if action == "menu" {
+                    if let Some(name) = name {
+                        self.chat_widget.show_checkpoint_actions(name);
+                    }
+                    return Ok(true);
                 }
+                // User commands and resume-time status queries must never unwind the TUI loop.
+                let result = app_server
+                    .thread_checkpoint(thread_id, action.clone(), name.clone())
+                    .await;
+                self.chat_widget
+                    .handle_checkpoint_result(action, prompt.as_deref(), result);
                 Ok(true)
             }
             AppCommand::Compact => {

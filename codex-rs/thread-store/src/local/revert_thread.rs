@@ -136,6 +136,21 @@ pub(super) async fn revert(
     recorder.persist().await.map_err(thread_store_io_error)?;
     recorder.shutdown().await.map_err(thread_store_io_error)?;
 
+    // Checkpoints belong to the session, not the replaceable rollout revision.
+    // Stage the opaque sidecar before publishing the new rollout; move ownership after CAS.
+    let source_checkpoints =
+        codex_rollout::plain_rollout_path(source_path.as_path()).with_extension("checkpoints.json");
+    let replacement_checkpoints = replacement_path.with_extension("checkpoints.json");
+    let copied_checkpoints =
+        match tokio::fs::copy(&source_checkpoints, &replacement_checkpoints).await {
+            Ok(_) => true,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+            Err(err) => {
+                let _ = tokio::fs::remove_file(&replacement_path).await;
+                return Err(thread_store_io_error(err));
+            }
+        };
+
     let replaced = state_db
         .replace_rollout_path_if_current(
             thread_id,
@@ -148,9 +163,15 @@ pub(super) async fn revert(
         })?;
     if !replaced {
         let _ = tokio::fs::remove_file(replacement_path.as_path()).await;
+        let _ = tokio::fs::remove_file(&replacement_checkpoints).await;
         return Err(ThreadStoreError::Conflict {
             message: format!("thread {thread_id} changed while it was being reverted"),
         });
+    }
+    if copied_checkpoints {
+        if let Err(err) = tokio::fs::remove_file(&source_checkpoints).await {
+            tracing::warn!(%err, "could not remove superseded checkpoint sidecar after revert");
+        }
     }
     Ok(())
 }
