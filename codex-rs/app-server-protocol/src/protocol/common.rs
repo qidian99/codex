@@ -753,6 +753,11 @@ client_request_definitions! {
         serialization: thread_id(params.thread_id),
         response: v2::ThreadUnarchiveResponse,
     },
+    ThreadCheckpoint => "thread/checkpoint" {
+        params: v2::ThreadCheckpointParams,
+        serialization: thread_id(params.thread_id),
+        response: v2::ThreadCheckpointResponse,
+    },
     ThreadCompactStart => "thread/compact/start" {
         params: v2::ThreadCompactStartParams,
         serialization: thread_id(params.thread_id),

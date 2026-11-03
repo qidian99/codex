@@ -1249,6 +1249,15 @@ impl CodexThread {
         self.session.multi_agent_version()
     }
 
+    /// Manage named conversation checkpoints without changing the visible transcript.
+    pub async fn checkpoint(
+        &self,
+        action: &str,
+        name: Option<&str>,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.session.checkpoint(action, name).await
+    }
+
     /// Shares an immutable view of the live parent model context and retained host facts.
     pub async fn conversation_history_snapshot(&self) -> Arc<dyn ConversationHistorySnapshot> {
         self.session.conversation_history_snapshot().await

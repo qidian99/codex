@@ -38,6 +38,13 @@ pub(crate) struct AsyncCompactionState {
     shutdown_cancellation: CancellationToken,
 }
 
+impl AsyncCompactionState {
+    pub(super) fn discard_pending_result(&mut self) {
+        self.result = None;
+        self.last_attempt = None;
+    }
+}
+
 pub(super) fn enabled(turn_context: &TurnContext) -> bool {
     let features = &turn_context.config.features;
     features.enabled(Feature::AsyncCompaction)

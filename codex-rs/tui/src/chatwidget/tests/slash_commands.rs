@@ -3919,3 +3919,20 @@ async fn owned_copy_guard_defers_queued_input_until_released() {
         assert!(chat.input_queue.queued_user_messages.is_empty());
     }
 }
+
+#[tokio::test]
+async fn checkpoint_commands_submit_control_requests_without_starting_a_turn() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(None).await;
+    for (command, action) in [
+        (SlashCommand::Cp, "save"),
+        (SlashCommand::Usecp, "use"),
+        (SlashCommand::Rmcp, "remove"),
+        (SlashCommand::Rmallcp, "clear"),
+    ] {
+        chat.dispatch_command(command);
+        assert!(!chat.bottom_pane.is_task_running());
+        assert!(matches!(op_rx.try_recv(), Ok(AppCommand::Checkpoint {
+            action: submitted, name: None,
+        }) if submitted == action));
+    }
+}

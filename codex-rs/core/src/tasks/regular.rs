@@ -55,6 +55,13 @@ impl SessionTask for RegularTask {
         input: Vec<TurnInput>,
         cancellation_token: CancellationToken,
     ) -> SessionTaskResult {
+        sess.begin_checkpoint_feedback(&ctx.sub_id, &input)
+            .await
+            .map_err(|err| {
+                codex_protocol::error::CodexErr::InvalidRequest(format!(
+                    "Checkpoint feedback could not start: {err:#}"
+                ))
+            })?;
         if ctx
             .config
             .features

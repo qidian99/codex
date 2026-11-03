@@ -828,6 +828,16 @@ impl App {
                 );
                 Ok(true)
             }
+            AppCommand::Checkpoint { action, name } => {
+                let response = app_server
+                    .thread_checkpoint(thread_id, action.clone(), name.clone())
+                    .await?;
+                self.chat_widget.set_frozen_checkpoint(response.frozen);
+                if action != "status" {
+                    self.chat_widget.add_info_message(response.message, None);
+                }
+                Ok(true)
+            }
             AppCommand::Compact => {
                 app_server.thread_compact_start(thread_id).await?;
                 Ok(true)
