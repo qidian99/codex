@@ -115,6 +115,8 @@ pub enum Feature {
     ShellTool,
     /// Enable the built-in local image viewer.
     ViewImage,
+    /// Upload ChatGPT input images once and reuse account-scoped file IDs.
+    ImageFileUploads,
     /// Allow registration of the built-in sleep tool.
     SleepTool,
     /// Enable Claude-style lifecycle hooks loaded from hooks.json files.
@@ -1171,6 +1173,12 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::ShellTool,
         key: "shell_tool",
+        stage: Stage::Stable,
+        default_enabled: true,
+    },
+    FeatureSpec {
+        id: Feature::ImageFileUploads,
+        key: "image_file_uploads",
         stage: Stage::Stable,
         default_enabled: true,
     },

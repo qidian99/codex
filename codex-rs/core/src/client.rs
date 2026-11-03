@@ -304,6 +304,7 @@ pub struct ModelClient {
     event_sender: Option<Sender<ProtocolEvent>>,
     http_client_factory: HttpClientFactory,
     restored_history: bool,
+    image_file_cache: Option<(Arc<crate::image_file_cache::ImageFileCache>, String)>,
     request_contributors: Vec<Arc<dyn codex_extension_api::ModelRequestContributor>>,
     executed_tool_calls: Option<ExecutedToolCalls>,
     // Resolved once when the session is created, like other session feature flags.
@@ -655,12 +656,141 @@ impl ModelClient {
             event_sender: None,
             http_client_factory,
             restored_history: false,
+            image_file_cache: None,
             request_contributors,
             executed_tool_calls: None,
             api_key_cyber_access_programs:
                 cyber_access_program::ApiKeyCyberAccessPrograms::UnsupportedProvider,
             required_cyber_access_programs: None,
         }
+    }
+
+    pub(crate) fn with_image_file_cache(
+        mut self,
+        root: std::path::PathBuf,
+        base_url: String,
+        enabled: bool,
+    ) -> Self {
+        if !enabled {
+            return self;
+        }
+        self.image_file_cache = Some((
+            Arc::new(crate::image_file_cache::ImageFileCache::new(root)),
+            base_url,
+        ));
+        self
+    }
+
+    async fn materialize_image_files(
+        &self,
+        setup: &CurrentClientSetup,
+        input: &mut [ResponseItem],
+    ) -> Result<()> {
+        let Some((cache, base_url)) = &self.image_file_cache else {
+            return Ok(());
+        };
+        let Some(auth) = setup.auth.as_ref().filter(|auth| auth.is_chatgpt_auth()) else {
+            return Ok(());
+        };
+        if !self.uses_codex_backend(Some(auth)) {
+            return Ok(());
+        }
+        let Some(account) = auth.get_account_id() else {
+            return Ok(());
+        };
+
+        // A provider named OpenAI can still target an independent server. Only
+        // replace inline bytes when the resolved inference route shares the file backend.
+        let Ok(configured) = url::Url::parse(base_url) else {
+            return Ok(());
+        };
+        let Ok(mut destination) = url::Url::parse(&setup.api_provider.base_url) else {
+            return Ok(());
+        };
+        let expected_path = format!("{}/codex", configured.path().trim_end_matches('/'));
+        let first_party = |url: &url::Url| {
+            url.scheme() == "https"
+                && url
+                    .host_str()
+                    .is_some_and(codex_http_client::is_allowed_chatgpt_host)
+        };
+        if destination.path().trim_end_matches('/') != expected_path
+            || destination.query().is_some()
+            || destination.fragment().is_some()
+            || (destination.origin() != configured.origin()
+                && !(first_party(&configured) && first_party(&destination)))
+        {
+            return Ok(());
+        }
+        destination.set_path(configured.path().trim_end_matches('/'));
+        let upload_base_url = destination.as_str().trim_end_matches('/');
+        let upload_auth = match self.state.provider.auth_manager() {
+            Some(manager) => codex_model_provider::auth_provider_from_auth_manager(manager, auth),
+            None => codex_model_provider::auth_provider_from_auth(auth),
+        };
+        let pool = codex_http_client::RouteAwareClientPool::new_without_request_logging(
+            setup.http_client_factory.clone(),
+            codex_http_client::ClientRouteClass::Api,
+        )
+        .with_legacy_custom_ca_fallback();
+
+        // Freeze headers for each batch so a rejected token can be compared with
+        // the manager's current token even if another request refreshes concurrently.
+        struct UploadHeaders(ApiHeaderMap);
+        impl AuthProvider for UploadHeaders {
+            fn add_auth_headers(
+                &self,
+                headers: &mut ApiHeaderMap,
+            ) -> std::result::Result<(), codex_api::AuthError> {
+                headers.extend(self.0.clone());
+                Ok(())
+            }
+        }
+        for attempt in 0..2 {
+            let rejected_headers = upload_auth
+                .to_auth_headers()
+                .map_err(std::io::Error::other)?;
+            let mut headers = rejected_headers.clone();
+            if let Some(routing) = setup
+                .api_provider
+                .headers
+                .get(codex_model_provider::ACCOUNT_ROUTING_HEADER)
+            {
+                headers.insert(
+                    codex_model_provider::ACCOUNT_ROUTING_HEADER,
+                    routing.clone(),
+                );
+            }
+            match cache
+                .materialize(
+                    upload_base_url,
+                    &account,
+                    &UploadHeaders(headers),
+                    &pool,
+                    input,
+                )
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    let unauthorized = matches!(
+                        error.get_ref().and_then(|error| error.downcast_ref::<codex_api::OpenAiFileError>()),
+                        Some(codex_api::OpenAiFileError::UnexpectedStatus { status, .. })
+                            if *status == StatusCode::UNAUTHORIZED
+                    );
+                    if attempt == 0
+                        && unauthorized
+                        && upload_auth
+                            .refresh_after_unauthorized(rejected_headers)
+                            .await
+                    {
+                        continue;
+                    }
+                    return Err(error.into());
+                }
+            }
+        }
+        unreachable!("image upload retry is bounded")
     }
 
     pub(crate) fn with_executed_tool_calls(mut self, recorder: ExecutedToolCalls) -> Self {
@@ -1938,6 +2068,9 @@ impl ResponsesHttpExecutor<'_> {
                     .extra_headers
                     .insert(X_CODEX_ROUTING_HINT_HEADER, header_value);
             }
+            self.client
+                .materialize_image_files(&client_setup, &mut request.input)
+                .await?;
             request.access_programs = cyber_access_program::for_auth(
                 client_setup.auth.as_ref(),
                 prompt.cyber_access_program,
@@ -2118,6 +2251,9 @@ impl ModelClientSession {
             if is_guardian_reviewer(&responses_headers) {
                 request.service_tier = None;
             }
+            self.client
+                .materialize_image_files(&client_setup, &mut request.input)
+                .await?;
             request.access_programs = cyber_access_program::for_auth(
                 client_setup.auth.as_ref(),
                 prompt.cyber_access_program,

@@ -1927,6 +1927,11 @@ impl Session {
                 workspace_routing.as_ref().clone(),
                 extensions.model_request_contributors().to_vec(),
             )
+            .with_image_file_cache(
+                config.codex_home.join("image-file-cache").to_path_buf(),
+                config.chatgpt_base_url.clone(),
+                config.features.enabled(Feature::ImageFileUploads),
+            )
             .with_executed_tool_calls(executed_tool_calls.clone())
             .with_restored_history(matches!(
                 &initial_history,
