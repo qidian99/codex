@@ -161,7 +161,8 @@ impl ChatWidget {
             return (false, None);
         }
         self.empty_state_animation.borrow_mut().dismiss();
-        if self.input_queue.rate_limit_recovery_pending
+        if (self.frozen_checkpoint.is_some() && self.is_cancellable_work_active())
+            || self.input_queue.rate_limit_recovery_pending
             || self.pending_image_submission.is_some()
             || self.safety_recourse.is_some()
         {

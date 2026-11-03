@@ -178,6 +178,10 @@ pub(crate) enum AppCommand {
         force_reload: bool,
     },
     Compact,
+    Checkpoint {
+        action: String,
+        name: Option<String>,
+    },
     SetThreadName {
         name: String,
     },

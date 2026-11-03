@@ -882,6 +882,26 @@ impl ThreadRequestProcessor {
         }
     }
 
+    pub(crate) async fn thread_checkpoint(
+        &self,
+        params: codex_app_server_protocol::ThreadCheckpointParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let (_, thread) = self.load_thread(&params.thread_id).await?;
+        ensure_direct_input_allowed(thread.as_ref()).await?;
+        let result = thread
+            .checkpoint(&params.action, params.name.as_deref())
+            .await
+            .map_err(|err| invalid_request(format!("{err:#}")))?;
+        Ok(Some(
+            codex_app_server_protocol::ThreadCheckpointResponse {
+                message: result["message"].as_str().unwrap_or_default().to_string(),
+                data: result["data"].clone(),
+                frozen: result["frozen"].as_str().map(str::to_string),
+            }
+            .into(),
+        ))
+    }
+
     pub(crate) async fn thread_compact_start(
         &self,
         request_id: &ConnectionRequestId,

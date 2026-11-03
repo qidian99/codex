@@ -1923,6 +1923,28 @@ impl AppServerSession {
         Ok(())
     }
 
+    pub(crate) async fn thread_checkpoint(
+        &mut self,
+        thread_id: ThreadId,
+        action: String,
+        name: Option<String>,
+    ) -> Result<codex_app_server_protocol::ThreadCheckpointResponse> {
+        let request_id = self.next_request_id();
+        let response: codex_app_server_protocol::ThreadCheckpointResponse = self
+            .request_handle
+            .request_typed(ClientRequest::ThreadCheckpoint {
+                request_id,
+                params: codex_app_server_protocol::ThreadCheckpointParams {
+                    thread_id: thread_id.to_string(),
+                    action,
+                    name,
+                },
+            })
+            .await
+            .wrap_err("thread/checkpoint failed in TUI")?;
+        Ok(response)
+    }
+
     pub(crate) async fn thread_compact_start(&mut self, thread_id: ThreadId) -> Result<()> {
         let request_id = self.next_request_id();
         let _: ThreadCompactStartResponse = self

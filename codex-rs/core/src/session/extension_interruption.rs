@@ -64,6 +64,7 @@ impl Session {
         turn_id: &str,
         reply: oneshot::Sender<bool>,
     ) {
+        let _checkpoint_abort_guard = self.checkpoint_abort_guard();
         let active_turn = {
             let mut active = self.active_turn.lock().await;
             let Some(turn) = active.as_ref().filter(|turn| {

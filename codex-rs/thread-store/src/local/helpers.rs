@@ -107,6 +107,48 @@ pub(super) fn touch_modified_time(path: &Path) -> std::io::Result<()> {
     OpenOptions::new().append(true).open(path)?.set_times(times)
 }
 
+/// Include session-scoped checkpoint state in the same rollback plan as its rollout.
+pub(super) fn append_checkpoint_moves(
+    moves: &mut Vec<(PathBuf, PathBuf)>,
+) -> ThreadStoreResult<()> {
+    let mut sidecars = Vec::new();
+    for (source, destination) in moves.iter() {
+        let source = codex_rollout::plain_rollout_path(source).with_extension("checkpoints.json");
+        let destination =
+            codex_rollout::plain_rollout_path(destination).with_extension("checkpoints.json");
+        if sidecars.iter().any(|(existing, _)| existing == &source) {
+            continue;
+        }
+        match std::fs::symlink_metadata(&source) {
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => {
+                return Err(ThreadStoreError::Internal {
+                    message: format!(
+                        "failed to inspect checkpoints `{}`: {err}",
+                        source.display()
+                    ),
+                });
+            }
+        }
+        if std::fs::symlink_metadata(&destination).is_ok()
+            || sidecars
+                .iter()
+                .any(|(_, existing)| existing == &destination)
+        {
+            return Err(ThreadStoreError::Conflict {
+                message: format!(
+                    "checkpoint destination already exists: `{}`",
+                    destination.display()
+                ),
+            });
+        }
+        sidecars.push((source, destination));
+    }
+    moves.extend(sidecars);
+    Ok(())
+}
+
 pub(super) fn restore_rollout_moves(moves: &[(PathBuf, PathBuf)]) -> std::io::Result<()> {
     for (source, destination) in moves.iter().rev() {
         std::fs::rename(destination, source)?;

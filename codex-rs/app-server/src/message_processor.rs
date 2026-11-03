@@ -1064,6 +1064,7 @@ impl MessageProcessor {
             | ClientRequest::TurnStart { .. }
             | ClientRequest::TurnSteer { .. }
             | ClientRequest::ReviewStart { .. }
+            | ClientRequest::ThreadCheckpoint { .. }
             | ClientRequest::ThreadCompactStart { .. }
             | ClientRequest::ThreadShellCommand { .. }
             | ClientRequest::ThreadQueueStart { .. }
@@ -1545,6 +1546,9 @@ impl MessageProcessor {
             ClientRequest::ThreadPredictionRequest { .. } => Err(method_not_found(
                 "thread/prediction/request is not implemented yet",
             )),
+            ClientRequest::ThreadCheckpoint { params, .. } => {
+                self.thread_processor.thread_checkpoint(params).await
+            }
             ClientRequest::ThreadCompactStart { params, .. } => {
                 self.thread_processor
                     .thread_compact_start(&request_id, params)

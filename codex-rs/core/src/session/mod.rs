@@ -261,6 +261,7 @@ mod reasoning_effort;
 mod submission;
 pub(crate) use reasoning_effort::RequestEffortUsage;
 pub(crate) use submission::Submission;
+mod conversation_checkpoints;
 mod input_queue;
 mod mcp;
 mod mcp_prewarm;

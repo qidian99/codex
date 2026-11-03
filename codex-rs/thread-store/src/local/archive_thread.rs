@@ -1,4 +1,5 @@
 use super::LocalThreadStore;
+use super::helpers::append_checkpoint_moves;
 use super::helpers::owned_rollout_paths_from_index;
 use super::helpers::restore_rollout_moves;
 use super::helpers::rollout_path_is_archived;
@@ -115,6 +116,7 @@ async fn archive_thread_with_paths(
         message: format!("failed to archive selected rollout for thread {thread_id}"),
     })?;
 
+    append_checkpoint_moves(&mut rollout_moves)?;
     for (index, (source, destination)) in rollout_moves.iter().enumerate() {
         if let Err(err) = std::fs::rename(source, destination) {
             if let Err(restore_err) = restore_rollout_moves(&rollout_moves[..index]) {
@@ -268,6 +270,8 @@ mod tests {
         let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
         let active_path =
             write_session_file(home.path(), "2025-01-03T12-00-00", uuid).expect("session file");
+        let checkpoints = active_path.with_extension("checkpoints.json");
+        std::fs::write(&checkpoints, "checkpoint state").expect("checkpoint sidecar");
 
         store
             .archive_thread(ArchiveThreadParams { thread_id })
@@ -280,6 +284,12 @@ mod tests {
             .join(ARCHIVED_SESSIONS_SUBDIR)
             .join(active_path.file_name().expect("file name"));
         assert!(archived_path.exists());
+        assert!(!checkpoints.exists());
+        assert_eq!(
+            std::fs::read_to_string(archived_path.with_extension("checkpoints.json"))
+                .expect("moved checkpoint sidecar"),
+            "checkpoint state"
+        );
 
         let archived = store
             .list_threads(ListThreadsParams {

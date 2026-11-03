@@ -641,6 +641,16 @@ impl ChatWidget {
     /// When the double-press quit shortcut is enabled, pressing the same shortcut again before
     /// expiry requests a shutdown-first quit.
     pub(super) fn on_ctrl_c(&mut self) {
+        if self.frozen_checkpoint.is_some()
+            && !self.is_cancellable_work_active()
+            && self.bottom_pane.no_modal_or_popup_active()
+        {
+            self.submit_op(AppCommand::Checkpoint {
+                action: "unfreeze".to_string(),
+                name: None,
+            });
+            return;
+        }
         let key = key_hint::ctrl(KeyCode::Char('c'));
         let modal_or_popup_active = !self.bottom_pane.no_modal_or_popup_active();
         let should_pause_active_goal = self
@@ -759,7 +769,7 @@ impl ChatWidget {
     }
 
     // Review mode counts as cancellable work so Ctrl+C interrupts instead of quitting.
-    fn is_cancellable_work_active(&self) -> bool {
+    pub(super) fn is_cancellable_work_active(&self) -> bool {
         self.bottom_pane.is_task_running() || self.review.is_review_mode
     }
 

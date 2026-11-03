@@ -613,6 +613,7 @@ impl Session {
     }
 
     pub async fn abort_all_tasks(self: &Arc<Self>, reason: TurnAbortReason) {
+        let _checkpoint_abort_guard = self.checkpoint_abort_guard();
         let mut aborted_turn = false;
         let mut active_turn_to_clear = None;
         if let Some(mut active_turn) = self.take_active_turn(&reason).await {
@@ -648,6 +649,7 @@ impl Session {
         reason: TurnAbortReason,
         error: Option<ErrorEvent>,
     ) -> bool {
+        let _checkpoint_abort_guard = self.checkpoint_abort_guard();
         let active_turn = {
             let mut active = self.active_turn.lock().await;
             if active
@@ -704,6 +706,9 @@ impl Session {
         turn_context: Arc<TurnContext>,
         task_result: SessionTaskResult,
     ) -> Option<McpStartupRequirements> {
+        // Serialize the detached finishing phase with checkpoint restoration and the
+        // next frozen feedback, including pending input recorded below.
+        let checkpoint_transaction = self.checkpoint_transaction.lock().await;
         let (regular_output, abort_reason, task_error) = match task_result {
             Ok(output) => (output, None, None),
             Err(err) if matches!(err.details(), CodexErrorDetails::TurnAborted) => {
@@ -954,6 +959,17 @@ impl Session {
                 time_to_first_token_ms,
             })
         };
+        let checkpoint_status = match &event {
+            EventMsg::TurnAborted(_) => "interrupted",
+            EventMsg::TurnComplete(event) if event.error.is_some() => "error",
+            _ => "completed",
+        };
+        if let Err(err) = self
+            .finish_checkpoint_feedback_locked(&turn_context.sub_id, checkpoint_status)
+            .await
+        {
+            warn!("failed to save checkpoint branch: {err:#}");
+        }
         let saved_guardian_completion =
             matches!(event, EventMsg::TurnComplete(_)) && self.is_private_guardian_reviewer().await;
         if !saved_guardian_completion {
@@ -984,6 +1000,7 @@ impl Session {
         if !saved_guardian_completion && let Err(err) = self.flush_rollout().await {
             warn!("failed to flush rollout after emitting terminal turn event: {err}");
         }
+        drop(checkpoint_transaction);
         if cleared_active_turn {
             self.maybe_start_turn_for_pending_work().await;
         }
@@ -1114,6 +1131,13 @@ impl Session {
             if let Err(err) = self.flush_rollout().await {
                 warn!("failed to flush interrupted-turn marker before emitting TurnAborted: {err}");
             }
+        }
+
+        if let Err(err) = self
+            .finish_checkpoint_feedback(&task.turn_context.sub_id, "interrupted")
+            .await
+        {
+            warn!("failed to save interrupted checkpoint branch: {err:#}");
         }
 
         if reason == TurnAbortReason::Interrupted {
