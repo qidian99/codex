@@ -11,7 +11,7 @@ Spec: User's explicit goal in this thread, including one concurrent upload per i
 - [x] Implement request-time image materialization for ChatGPT authentication only, persistent account-scoped content cache, concurrent upload and stable file IDs.
 - [x] Verify cache concurrency/deduplication/persistence/order with a focused test; review integration in both HTTP/WebSocket request paths.
 - [x] Build CLI and companion binaries; verify a real two-image request and replay with no additional uploads.
-- [ ] Install versioned binaries and update managed daemon packages, checking running executable paths and reported versions.
+- [x] Install versioned binaries and update managed daemon packages, checking running executable paths and reported versions.
 
 ## Implementation notes
 - The current CLI is 0.165.0+imagefix.1; managed daemons include 0.166.0 and local builds. The current agent itself runs under the admin daemon, so restart that service last.
@@ -36,3 +36,4 @@ Spec: User's explicit goal in this thread, including one concurrent upload per i
 
 - Versioned release 0.166.0+imagecp.1 built successfully with all three executables. Live two-image ChatGPT smoke passed: initial turn 8.93 s, history-only follow-up 1.94 s; exactly two cached IDs unchanged across turns. Different response content means these timings are not an isolated upload-speed comparison. Default-on feature confirmed.
 - Deployment script verifies managed daemon reported version, live PID executable path, and SHA-256 of CLI plus both companions; admin daemon updated last because it hosts this session. Runtime deployment evidence is stored in /tmp/codex-imagecp-install/*-verified.json.
+- Final deployment verified: CLI plus all five managed homes (.codex, .codex-a, .codexq, qwen-local/config/codex, .codex-admin) run 0.166.0+imagecp.1, with live PID paths and all three executable hashes matching the package. Admin update succeeded; its initial verification wrapper used system Python 3.9 without hashlib.file_digest, so verification was completed successfully with Homebrew Python without another restart.
