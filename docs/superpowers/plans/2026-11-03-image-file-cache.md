@@ -8,9 +8,9 @@ Spec: User's explicit goal in this thread, including one concurrent upload per i
 
 ## Steps
 - [x] Fetch and integrate upstream main while retaining existing local image fixes.
-- [ ] Implement request-time image materialization for ChatGPT authentication only, persistent account-scoped content cache, concurrent upload and stable file IDs.
-- [ ] Verify duplicate reuse, concurrent distinct uploads, unchanged image detail/order and both HTTP/WebSocket request paths with focused tests.
-- [ ] Build CLI and companion binaries; verify a real two-image request and replay with no additional uploads.
+- [x] Implement request-time image materialization for ChatGPT authentication only, persistent account-scoped content cache, concurrent upload and stable file IDs.
+- [x] Verify cache concurrency/deduplication/persistence/order with a focused test; review integration in both HTTP/WebSocket request paths.
+- [x] Build CLI and companion binaries; verify a real two-image request and replay with no additional uploads.
 - [ ] Install versioned binaries and update managed daemon packages, checking running executable paths and reported versions.
 
 ## Implementation notes
@@ -33,3 +33,6 @@ Spec: User's explicit goal in this thread, including one concurrent upload per i
 - Focused checkpoint tests compiled and ran: one passed, two failed on synthetic fixtures lacking normalized `unknown` content kinds. Fixtures corrected without weakening assertions. Per user request, stop further debug-test rebuilds and proceed to release build plus minimal runtime smoke.
 - Checkpoint scoped review now reports no remaining concrete defects after transaction/abort/stale-completion fixes.
 - First optimized package built and checkpoint runtime smoke passed (5 mock responses including restart). Live image upload created two cached files, but model requests failed: unversioned main (`0.0.0`) is gated out of gpt-6.1-terra. Direct catalog check confirms 0.0.0 lacks that model while 0.166.0 includes it. Restored previous CLI/managed packages; rebuilding as 0.166.0+imagecp.1 before final deployment.
+
+- Versioned release 0.166.0+imagecp.1 built successfully with all three executables. Live two-image ChatGPT smoke passed: initial turn 8.93 s, history-only follow-up 1.94 s; exactly two cached IDs unchanged across turns. Different response content means these timings are not an isolated upload-speed comparison. Default-on feature confirmed.
+- Deployment script verifies managed daemon reported version, live PID executable path, and SHA-256 of CLI plus both companions; admin daemon updated last because it hosts this session. Runtime deployment evidence is stored in /tmp/codex-imagecp-install/*-verified.json.
