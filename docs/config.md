@@ -23,6 +23,17 @@ order, and detail settings remain available together to the model; local session
 history retains the original images. This does not itself guarantee model prompt
 cache hits or reduce image input tokens.
 
+Draft images are pre-uploaded as soon as they are attached in the TUI, including
+pasted clipboard images. This starts network transfer before sending the message;
+removing the draft does not delete a file already uploaded. The upload is best
+effort: a failure is retried when the message is sent. Pre-upload is enabled by
+default when `image_file_uploads` is enabled. To disable only pre-upload:
+
+```toml
+[features]
+image_file_preupload = false
+```
+
 To disable uploads and send inline images as before, add to your Codex
 `config.toml` (normally `$CODEX_HOME/config.toml` or `~/.codex/config.toml`):
 

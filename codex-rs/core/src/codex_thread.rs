@@ -1249,6 +1249,49 @@ impl CodexThread {
         self.session.multi_agent_version()
     }
 
+    pub async fn withdraw_steer(&self, client_id: &str) -> bool {
+        self.session
+            .input_queue
+            .withdraw_steer(&self.session.active_turn, client_id)
+            .await
+    }
+
+    /// Best-effort upload of a draft attachment; does not modify conversation history.
+    pub fn preupload_image(&self, path: std::path::PathBuf) {
+        if !self
+            .session
+            .features()
+            .enabled(codex_features::Feature::ImageFilePreupload)
+            || !self
+                .session
+                .features()
+                .enabled(codex_features::Feature::ImageFileUploads)
+        {
+            return;
+        }
+        let client = self.session.services.model_client.clone();
+        tokio::spawn(async move {
+            let input = tokio::task::spawn_blocking(move || {
+                let mut input = codex_protocol::user_input::UserInput::LocalImage {
+                    path,
+                    detail: Some(codex_protocol::models::ImageDetail::Original),
+                };
+                codex_protocol::models::snapshot_local_user_input(&mut input)?;
+                Ok::<_, std::io::Error>(input)
+            })
+            .await;
+            if let Ok(Ok(codex_protocol::user_input::UserInput::Image {
+                image: codex_protocol::models::ImageReference::Inline { image_url },
+                ..
+            })) = input
+            {
+                if let Err(err) = client.preupload_image(image_url).await {
+                    tracing::debug!(%err, "draft image preupload failed; retry on submission");
+                }
+            }
+        });
+    }
+
     /// Manage named conversation checkpoints without changing the visible transcript.
     pub async fn checkpoint(
         &self,

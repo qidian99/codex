@@ -883,6 +883,30 @@ impl ThreadRequestProcessor {
         }
     }
 
+    pub(crate) async fn thread_steer_withdraw(
+        &self,
+        params: codex_app_server_protocol::ThreadSteerWithdrawParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let (_, thread) = self.load_thread(&params.thread_id).await?;
+        ensure_direct_input_allowed(thread.as_ref()).await?;
+        let withdrawn = thread.withdraw_steer(&params.client_id).await;
+        Ok(Some(
+            codex_app_server_protocol::ThreadSteerWithdrawResponse { withdrawn }.into(),
+        ))
+    }
+
+    pub(crate) async fn thread_image_preupload(
+        &self,
+        params: codex_app_server_protocol::ThreadImagePreuploadParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let (_, thread) = self.load_thread(&params.thread_id).await?;
+        ensure_direct_input_allowed(thread.as_ref()).await?;
+        thread.preupload_image(params.path);
+        Ok(Some(
+            codex_app_server_protocol::ThreadImagePreuploadResponse {}.into(),
+        ))
+    }
+
     pub(crate) async fn thread_checkpoint(
         &self,
         params: codex_app_server_protocol::ThreadCheckpointParams,

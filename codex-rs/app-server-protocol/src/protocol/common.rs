@@ -753,6 +753,16 @@ client_request_definitions! {
         serialization: thread_id(params.thread_id),
         response: v2::ThreadUnarchiveResponse,
     },
+    ThreadSteerWithdraw => "thread/steer/withdraw" {
+        params: v2::ThreadSteerWithdrawParams,
+        serialization: thread_id(params.thread_id),
+        response: v2::ThreadSteerWithdrawResponse,
+    },
+    ThreadImagePreupload => "thread/image/preupload" {
+        params: v2::ThreadImagePreuploadParams,
+        serialization: None,
+        response: v2::ThreadImagePreuploadResponse,
+    },
     ThreadCheckpoint => "thread/checkpoint" {
         params: v2::ThreadCheckpointParams,
         serialization: thread_id(params.thread_id),

@@ -1072,6 +1072,8 @@ impl MessageProcessor {
             | ClientRequest::TurnStart { .. }
             | ClientRequest::TurnSteer { .. }
             | ClientRequest::ReviewStart { .. }
+            | ClientRequest::ThreadSteerWithdraw { .. }
+            | ClientRequest::ThreadImagePreupload { .. }
             | ClientRequest::ThreadCheckpoint { .. }
             | ClientRequest::ThreadCompactStart { .. }
             | ClientRequest::ThreadShellCommand { .. }
@@ -1554,6 +1556,12 @@ impl MessageProcessor {
             ClientRequest::ThreadPredictionRequest { .. } => Err(method_not_found(
                 "thread/prediction/request is not implemented yet",
             )),
+            ClientRequest::ThreadSteerWithdraw { params, .. } => {
+                self.thread_processor.thread_steer_withdraw(params).await
+            }
+            ClientRequest::ThreadImagePreupload { params, .. } => {
+                self.thread_processor.thread_image_preupload(params).await
+            }
             ClientRequest::ThreadCheckpoint { params, .. } => {
                 self.thread_processor.thread_checkpoint(params).await
             }

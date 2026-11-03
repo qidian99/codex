@@ -828,6 +828,56 @@ impl App {
                 );
                 Ok(true)
             }
+            AppCommand::SteerWithdraw { client_id } => {
+                let request = ClientRequest::ThreadSteerWithdraw {
+                    request_id: codex_app_server_protocol::RequestId::String(
+                        uuid::Uuid::new_v4().to_string(),
+                    ),
+                    params: codex_app_server_protocol::ThreadSteerWithdrawParams {
+                        thread_id: thread_id.to_string(),
+                        client_id: client_id.clone(),
+                    },
+                };
+                match app_server
+                    .request_handle()
+                    .request_typed::<codex_app_server_protocol::ThreadSteerWithdrawResponse>(
+                        request,
+                    )
+                    .await
+                {
+                    Ok(response) => self
+                        .chat_widget
+                        .finish_steer_withdraw(client_id, response.withdrawn),
+                    Err(error) => self
+                        .chat_widget
+                        .add_error_message(format!("Could not withdraw steer: {error:#}")),
+                }
+                Ok(true)
+            }
+            AppCommand::ImagePreupload { path } => {
+                let handle = app_server.request_handle();
+                let path = path.clone();
+                tokio::spawn(async move {
+                    let request = ClientRequest::ThreadImagePreupload {
+                        request_id: codex_app_server_protocol::RequestId::String(
+                            uuid::Uuid::new_v4().to_string(),
+                        ),
+                        params: codex_app_server_protocol::ThreadImagePreuploadParams {
+                            thread_id: thread_id.to_string(),
+                            path,
+                        },
+                    };
+                    let result = handle
+                        .request_typed::<codex_app_server_protocol::ThreadImagePreuploadResponse>(
+                            request,
+                        )
+                        .await;
+                    if let Err(error) = result {
+                        tracing::debug!(%error, "draft image preupload request failed");
+                    }
+                });
+                Ok(true)
+            }
             AppCommand::Checkpoint {
                 action,
                 name,

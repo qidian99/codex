@@ -425,6 +425,21 @@ impl InputQueue {
         turn_state.lock().await.pending_input.items.extend(input);
     }
 
+    pub(crate) async fn withdraw_steer(
+        &self,
+        active_turn: &Mutex<Option<ActiveTurn>>,
+        client_id: &str,
+    ) -> bool {
+        let active = active_turn.lock().await;
+        let Some(turn) = active.as_ref() else {
+            return false;
+        };
+        let mut state = turn.turn_state.lock().await;
+        let Some(index) = state.pending_input.items.iter().position(|item| matches!(item, TurnInput::UserInput { client_id: Some(id), .. } if id == client_id)) else { return false; };
+        state.pending_input.items.remove(index);
+        true
+    }
+
     pub(crate) async fn take_pending_input_for_turn_state(
         &self,
         turn_state: &Mutex<TurnState>,

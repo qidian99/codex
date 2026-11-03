@@ -117,6 +117,8 @@ pub enum Feature {
     ViewImage,
     /// Upload ChatGPT input images once and reuse account-scoped file IDs.
     ImageFileUploads,
+    /// Pre-upload pasted images while the user is composing.
+    ImageFilePreupload,
     /// Allow registration of the built-in sleep tool.
     SleepTool,
     /// Enable Claude-style lifecycle hooks loaded from hooks.json files.
@@ -1173,6 +1175,12 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::ShellTool,
         key: "shell_tool",
+        stage: Stage::Stable,
+        default_enabled: true,
+    },
+    FeatureSpec {
+        id: Feature::ImageFilePreupload,
+        key: "image_file_preupload",
         stage: Stage::Stable,
         default_enabled: true,
     },
