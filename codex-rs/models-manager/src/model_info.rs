@@ -55,6 +55,19 @@ pub fn with_config_overrides(mut model: ModelInfo, config: &ModelsManagerConfig)
         *instructions_template = strip_personality_section(std::mem::take(instructions_template));
     }
 
+    // Local interactive preference: long-running work can wait without periodic narration.
+    // Keep explicit user-provided instruction overrides intact.
+    if config.base_instructions.is_none()
+        && let Some(template) = model
+            .model_messages
+            .as_mut()
+            .and_then(|m| m.instructions_template.as_mut())
+    {
+        *template = template
+            .replace("The user appreciates consistent, frequent communication during your turn, and should not be left without a commentary update for more than 60 seconds during ongoing work.", "Give progress updates when they convey useful new information; do not report at fixed intervals while waiting for a command.")
+            .replace("- Avoid performing blocking sleep or wait calls longer than 60 seconds, as they may prevent you from communicating with the user for their duration.", "- For long-running commands, wait for completion when practical; use an explicit timeout when needed. Yield earlier for interactive commands or when user input is required.");
+    }
+
     model
 }
 
