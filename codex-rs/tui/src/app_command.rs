@@ -181,6 +181,7 @@ pub(crate) enum AppCommand {
     Checkpoint {
         action: String,
         name: Option<String>,
+        prompt: Option<String>,
     },
     SetThreadName {
         name: String,

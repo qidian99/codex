@@ -138,6 +138,7 @@ impl ChatWidget {
             self.submit_op(AppCommand::Checkpoint {
                 action: "status".to_string(),
                 name: None,
+                prompt: None,
             });
         }
         self.current_cwd = Some(session.cwd.to_path_buf());

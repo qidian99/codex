@@ -309,6 +309,7 @@ mod hook_lifecycle;
 mod hooks;
 mod interaction;
 pub(crate) use interaction::KeyEventAction;
+mod checkpoints;
 mod skills;
 mod slash_command_args;
 mod slash_dispatch;

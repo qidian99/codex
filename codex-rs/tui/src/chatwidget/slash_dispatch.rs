@@ -1429,7 +1429,7 @@ impl ChatWidget {
 }
 
 impl ChatWidget {
-    fn dispatch_checkpoint_command(&mut self, command: SlashCommand, name: &str) {
+    pub(super) fn dispatch_checkpoint_command(&mut self, command: SlashCommand, name: &str) {
         if self.blocks_direct_input {
             self.add_error_message(PARENT_OWNED_INPUT_MESSAGE.to_string());
             return;
@@ -1440,25 +1440,40 @@ impl ChatWidget {
             );
             return;
         }
-        let action = match command {
-            SlashCommand::Cp => "save",
-            SlashCommand::Usecp => "use",
-            SlashCommand::Rmcp => "remove",
-            SlashCommand::Rmallcp => "clear",
-            _ => return,
-        };
-        if action == "clear" && !name.is_empty() {
+        let args = name.trim();
+        if command == SlashCommand::Rmallcp && !args.is_empty() {
             self.add_error_message("Usage: /rmallcp".to_string());
             return;
         }
-        let (action, name) = if action == "use" && name.ends_with('!') {
-            ("freeze", name.trim_end_matches('!').trim())
-        } else {
-            (action, name)
+        let (action, name, prompt) = match command {
+            SlashCommand::Cp if args.is_empty() => ("list", None, None),
+            SlashCommand::Cp => ("save", Some(args.to_string()), None),
+            SlashCommand::Usecp if args.is_empty() => ("list", None, None),
+            SlashCommand::Usecp => {
+                let (name, prompt) = args
+                    .split_once(char::is_whitespace)
+                    .map_or((args, ""), |(name, prompt)| (name, prompt.trim()));
+                let (action, name) = name
+                    .strip_suffix('!')
+                    .map_or(("use", name), |name| ("freeze", name));
+                if name.is_empty() {
+                    self.add_error_message("Usage: /usecp NAME[!] [question]".to_string());
+                    return;
+                }
+                (
+                    action,
+                    Some(name.to_string()),
+                    (!prompt.is_empty()).then(|| prompt.to_string()),
+                )
+            }
+            SlashCommand::Rmcp => ("remove", (!args.is_empty()).then(|| args.to_string()), None),
+            SlashCommand::Rmallcp => ("clear", None, None),
+            _ => return,
         };
         self.submit_op(AppCommand::Checkpoint {
             action: action.to_string(),
-            name: (!name.is_empty()).then(|| name.to_string()),
+            name,
+            prompt,
         });
     }
 }

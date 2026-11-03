@@ -648,6 +648,7 @@ impl ChatWidget {
             self.submit_op(AppCommand::Checkpoint {
                 action: "unfreeze".to_string(),
                 name: None,
+                prompt: None,
             });
             return;
         }

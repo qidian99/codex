@@ -3921,15 +3921,45 @@ async fn owned_copy_guard_defers_queued_input_until_released() {
 async fn checkpoint_commands_submit_control_requests_without_starting_a_turn() {
     let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(None).await;
     for (command, action) in [
-        (SlashCommand::Cp, "save"),
-        (SlashCommand::Usecp, "use"),
+        (SlashCommand::Cp, "list"),
+        (SlashCommand::Usecp, "list"),
         (SlashCommand::Rmcp, "remove"),
         (SlashCommand::Rmallcp, "clear"),
     ] {
         chat.dispatch_command(command);
         assert!(!chat.bottom_pane.is_task_running());
         assert!(matches!(op_rx.try_recv(), Ok(AppCommand::Checkpoint {
-            action: submitted, name: None,
+            action: submitted, name: None, prompt: None,
         }) if submitted == action));
     }
+}
+
+#[tokio::test]
+async fn checkpoint_inline_question_waits_for_success_and_errors_keep_tui_usable() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(None).await;
+    chat.dispatch_checkpoint_command(SlashCommand::Usecp, "a! fix the second issue");
+    assert!(
+        matches!(op_rx.try_recv(), Ok(AppCommand::Checkpoint { action, name, prompt })
+        if action == "freeze" && name.as_deref() == Some("a") && prompt.as_deref() == Some("fix the second issue"))
+    );
+    assert!(!chat.bottom_pane.is_task_running());
+    chat.handle_checkpoint_result(
+        "use",
+        Some("my question"),
+        Err(color_eyre::eyre::eyre!(
+            "Checkpoint 'missing' does not exist."
+        )),
+    );
+    assert!(!chat.bottom_pane.is_task_running());
+    assert!(op_rx.try_recv().is_err());
+    chat.handle_checkpoint_result(
+        "status",
+        None,
+        Err(color_eyre::eyre::eyre!("server disconnected")),
+    );
+    chat.dispatch_checkpoint_command(SlashCommand::Cp, "still-alive");
+    assert!(
+        matches!(op_rx.try_recv(), Ok(AppCommand::Checkpoint { action, name, prompt: None })
+        if action == "save" && name.as_deref() == Some("still-alive"))
+    );
 }
