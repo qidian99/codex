@@ -677,6 +677,23 @@ impl ModelClient {
         self
     }
 
+    pub(crate) async fn preupload_image(&self, image_url: String) -> Result<()> {
+        let setup = self.current_client_setup(ClientRouting::Workspace).await?;
+        let mut input = vec![ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![codex_protocol::models::ContentItem::InputImage {
+                image: codex_protocol::models::ImageReference::Inline { image_url },
+                detail: None,
+            }],
+            encrypted_content: None,
+            status: None,
+            phase: None,
+            internal_chat_message_metadata_passthrough: None,
+        }];
+        self.materialize_image_files(&setup, &mut input).await
+    }
+
     async fn materialize_image_files(
         &self,
         setup: &CurrentClientSetup,

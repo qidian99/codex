@@ -344,6 +344,31 @@ impl ChatWidget {
         }
     }
 
+    pub(crate) fn finish_steer_withdraw(&mut self, client_id: &str, withdrawn: bool) {
+        if !withdrawn {
+            self.add_info_message(
+                "This steer has already been delivered and cannot be withdrawn.".to_string(),
+                None,
+            );
+            return;
+        }
+        if let Some(index) = self
+            .input_queue
+            .pending_steers
+            .iter()
+            .position(|s| s.client_id == client_id)
+        {
+            if let Some(steer) = self.input_queue.pending_steers.remove(index) {
+                self.restore_user_message_to_composer(user_message_for_restore(
+                    steer.user_message,
+                    &steer.history_record,
+                ));
+                self.refresh_pending_input_preview();
+                self.request_redraw();
+            }
+        }
+    }
+
     pub(crate) fn enqueue_rejected_steer(&mut self) -> bool {
         let Some(pending_steer) = self.input_queue.pending_steers.pop_front() else {
             tracing::warn!(

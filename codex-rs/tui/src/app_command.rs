@@ -178,6 +178,12 @@ pub(crate) enum AppCommand {
         force_reload: bool,
     },
     Compact,
+    SteerWithdraw {
+        client_id: String,
+    },
+    ImagePreupload {
+        path: std::path::PathBuf,
+    },
     Checkpoint {
         action: String,
         name: Option<String>,

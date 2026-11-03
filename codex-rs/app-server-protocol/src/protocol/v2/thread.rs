@@ -1205,6 +1205,35 @@ pub struct ThreadCompactStartParams {
 #[ts(export_to = "v2/")]
 pub struct ThreadCompactStartResponse {}
 
+/// Withdraw an unconsumed steer by its client message ID.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadSteerWithdrawParams {
+    pub thread_id: String,
+    pub client_id: String,
+}
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadSteerWithdrawResponse {
+    pub withdrawn: bool,
+}
+
+/// Start best-effort upload of a local draft attachment.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadImagePreuploadParams {
+    pub thread_id: String,
+    pub path: PathBuf,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadImagePreuploadResponse {}
+
 /// Manage a named snapshot of model context, leaving the visible transcript intact.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]

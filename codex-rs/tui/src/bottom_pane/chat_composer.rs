@@ -1909,11 +1909,14 @@ impl ChatComposer {
         }
     }
 
-    /// Insert an attachment placeholder and track it for the next submission.
+    /// Insert an attachment placeholder, begin best-effort pre-upload, and track it for submission.
     pub fn attach_image(&mut self, path: PathBuf) {
         self.dismiss_sparkle();
         let started_vim_edit = self.begin_direct_vim_edit();
         let elements_before = self.draft.textarea.element_payloads();
+        self.app_event_tx.send(AppEvent::CodexOp(
+            crate::app_command::AppCommand::ImagePreupload { path: path.clone() },
+        ));
         self.attachments
             .attach_image(&mut self.draft.textarea, path);
         self.reconcile_deleted_elements(elements_before);
