@@ -308,7 +308,8 @@ async fn capacity_recovery_retries_without_advice_or_transport_budget(
         .with_config(|config| {
             config
                 .features
-                .enable(codex_features::Feature::AutoContinueOnRateLimit);
+                .enable(codex_features::Feature::AutoContinueOnRateLimit)
+                .expect("enable capacity recovery");
             config.model_provider.request_max_retries = Some(0);
             config.model_provider.stream_max_retries = Some(0);
         })
@@ -346,7 +347,8 @@ async fn capacity_recovery_can_be_interrupted_during_backoff() -> Result<()> {
         .with_config(|config| {
             config
                 .features
-                .enable(codex_features::Feature::AutoContinueOnRateLimit);
+                .enable(codex_features::Feature::AutoContinueOnRateLimit)
+                .expect("enable capacity recovery");
         })
         .build_with_auto_env(&server)
         .await?;
@@ -388,7 +390,8 @@ async fn capacity_recovery_retries_headerless_websocket_overload() -> Result<()>
         .with_config(|config| {
             config
                 .features
-                .enable(codex_features::Feature::AutoContinueOnRateLimit);
+                .enable(codex_features::Feature::AutoContinueOnRateLimit)
+                .expect("enable capacity recovery");
             config.model_catalog = Some(bundled_models_response().expect("bundled models"));
             config.model_provider.request_max_retries = Some(0);
             config.model_provider.stream_max_retries = Some(0);

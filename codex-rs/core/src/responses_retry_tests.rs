@@ -19,7 +19,8 @@ async fn capacity_retries_outlive_transport_budget_with_capped_backoff() {
     let (session, mut turn_context) = make_session_and_context().await;
     Arc::make_mut(&mut turn_context.config)
         .features
-        .enable(Feature::AutoContinueOnRateLimit);
+        .enable(Feature::AutoContinueOnRateLimit)
+        .expect("enable capacity recovery");
     let step_context = StepContext::for_test(Arc::new(turn_context));
     let mut client_session = session.services.model_client.new_session();
     let mut retry_state = ResponsesStreamRetryState::default();
@@ -52,7 +53,8 @@ async fn capacity_retries_respect_server_deadline_and_compaction_requests() {
     let (session, mut turn_context) = make_session_and_context().await;
     Arc::make_mut(&mut turn_context.config)
         .features
-        .enable(Feature::AutoContinueOnRateLimit);
+        .enable(Feature::AutoContinueOnRateLimit)
+        .expect("enable capacity recovery");
     let step_context = StepContext::for_test(Arc::new(turn_context));
     let mut client_session = session.services.model_client.new_session();
     let mut retry_state = ResponsesStreamRetryState::default();
@@ -96,7 +98,8 @@ async fn capacity_recovery_does_not_retry_quota_errors_or_disabled_policy() {
     let mut client_session = session.services.model_client.new_session();
     Arc::make_mut(&mut turn_context.config)
         .features
-        .enable(Feature::AutoContinueOnRateLimit);
+        .enable(Feature::AutoContinueOnRateLimit)
+        .expect("enable capacity recovery");
     let step_context = StepContext::for_test(Arc::new(turn_context));
     assert!(
         handle_response_stream_error(
