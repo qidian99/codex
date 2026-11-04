@@ -239,6 +239,8 @@ pub enum Feature {
     EnableRequestCompression,
     /// Keep active sampling turns alive until a failed network connection recovers.
     UnboundedConnectionRetries,
+    /// Retry transient capacity failures and resume goals stopped by those failures.
+    AutoContinueOnRateLimit,
     /// Start the managed network proxy for sandboxed sessions.
     NetworkProxy,
     /// Mask credentials and inject them through an already enabled network proxy.
@@ -1607,6 +1609,12 @@ pub const FEATURES: &[FeatureSpec] = &[
         key: "unbounded_connection_retries",
         stage: Stage::Stable,
         default_enabled: true,
+    },
+    FeatureSpec {
+        id: Feature::AutoContinueOnRateLimit,
+        key: "auto_continue_on_rate_limit",
+        stage: Stage::Stable,
+        default_enabled: false,
     },
     FeatureSpec {
         id: Feature::NetworkProxy,

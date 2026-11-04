@@ -5,6 +5,7 @@ use super::log_retry;
 use crate::realtime_history::RealtimeHistoryState;
 use crate::session::step_context::StepContext;
 use crate::session::tests::make_session_and_context;
+use codex_features::Feature;
 use codex_http_client::RetryAfter;
 use codex_protocol::error::CodexErr;
 use std::sync::Arc;
@@ -12,6 +13,106 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 use tracing_test::internal::MockWriter;
+
+#[tokio::test]
+async fn capacity_retries_outlive_transport_budget_with_capped_backoff() {
+    let (session, mut turn_context) = make_session_and_context().await;
+    Arc::make_mut(&mut turn_context.config)
+        .features
+        .enable(Feature::AutoContinueOnRateLimit);
+    let step_context = StepContext::for_test(Arc::new(turn_context));
+    let mut client_session = session.services.model_client.new_session();
+    let mut retry_state = ResponsesStreamRetryState::default();
+    tokio::time::pause();
+    for attempt in 1..=8 {
+        let start = Instant::now();
+        handle_response_stream_error(
+            &mut retry_state,
+            /*max_retries*/ 0,
+            CodexErr::ServerOverloaded,
+            &mut client_session,
+            &session,
+            &step_context,
+            ResponsesStreamRequest::Sampling,
+        )
+        .await
+        .expect("capacity retry should not exhaust the transport budget");
+        let elapsed = start.elapsed();
+        assert!((Duration::from_millis(4500)..=Duration::from_millis(60001)).contains(&elapsed));
+        if attempt >= 5 {
+            assert!(elapsed >= Duration::from_secs(60));
+        }
+        assert_eq!(retry_state.capacity_retries, attempt);
+        assert_eq!(retry_state.retries, 0);
+    }
+}
+
+#[tokio::test]
+async fn capacity_retries_respect_server_deadline_and_compaction_requests() {
+    let (session, mut turn_context) = make_session_and_context().await;
+    Arc::make_mut(&mut turn_context.config)
+        .features
+        .enable(Feature::AutoContinueOnRateLimit);
+    let step_context = StepContext::for_test(Arc::new(turn_context));
+    let mut client_session = session.services.model_client.new_session();
+    let mut retry_state = ResponsesStreamRetryState::default();
+    tokio::time::pause();
+    let start = Instant::now();
+    let advice = RetryAfter::from_delay(Duration::from_secs(90)).expect("retry deadline");
+    handle_response_stream_error(
+        &mut retry_state,
+        /*max_retries*/ 0,
+        CodexErr::ServerOverloaded.with_retry_after(advice),
+        &mut client_session,
+        &session,
+        &step_context,
+        ResponsesStreamRequest::RemoteCompactionV2,
+    )
+    .await
+    .expect("compaction should wait for capacity too");
+    assert!((Duration::from_secs(90)..=Duration::from_millis(90001)).contains(&start.elapsed()));
+}
+
+#[tokio::test]
+async fn capacity_recovery_does_not_retry_quota_errors_or_disabled_policy() {
+    let (session, turn_context) = make_session_and_context().await;
+    let mut client_session = session.services.model_client.new_session();
+    let step_context = StepContext::for_test(Arc::new(turn_context));
+    let mut retry_state = ResponsesStreamRetryState::default();
+    assert!(
+        handle_response_stream_error(
+            &mut retry_state,
+            0,
+            CodexErr::ServerOverloaded,
+            &mut client_session,
+            &session,
+            &step_context,
+            ResponsesStreamRequest::Sampling,
+        )
+        .await
+        .is_err()
+    );
+    let (session, mut turn_context) = make_session_and_context().await;
+    let mut client_session = session.services.model_client.new_session();
+    Arc::make_mut(&mut turn_context.config)
+        .features
+        .enable(Feature::AutoContinueOnRateLimit);
+    let step_context = StepContext::for_test(Arc::new(turn_context));
+    assert!(
+        handle_response_stream_error(
+            &mut retry_state,
+            0,
+            CodexErr::QuotaExceeded,
+            &mut client_session,
+            &session,
+            &step_context,
+            ResponsesStreamRequest::Sampling,
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(retry_state.capacity_retries, 0);
+}
 
 #[tokio::test]
 async fn sampling_retry_logs_stream_error_context() {

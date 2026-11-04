@@ -81,6 +81,39 @@ fn retryability_preserves_error_details_distinctions() {
     }
 }
 
+#[test]
+fn capacity_recovery_excludes_billing_policy_and_terminal_errors() {
+    for error in [
+        CodexErr::ServerOverloaded,
+        CodexErrorDetails::PolicyCapacityUnavailable.into(),
+        CodexErrorDetails::RateLimitExceeded("slow down".into()).into(),
+        CodexErr::RetryLimit(RetryLimitReachedError {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            request_id: None,
+        }),
+    ] {
+        assert!(error.details().is_transient_capacity_error());
+    }
+    for error in [
+        CodexErr::QuotaExceeded,
+        CodexErr::UsageNotIncluded,
+        CodexErrorDetails::FlexUnavailable.into(),
+        CodexErr::ContextWindowExceeded,
+        CodexErr::Interrupted,
+        CodexErr::Fatal("stop".into()),
+        CodexErr::RetryLimit(RetryLimitReachedError {
+            status: StatusCode::FORBIDDEN,
+            request_id: None,
+        }),
+        CodexErrorDetails::CyberPolicy {
+            message: "denied".into(),
+        }
+        .into(),
+    ] {
+        assert!(!error.details().is_transient_capacity_error(), "{error}");
+    }
+}
+
 /// Retryable errors prefer server advice and otherwise back off by attempt; advice does not
 /// make a terminal error retryable.
 #[test]

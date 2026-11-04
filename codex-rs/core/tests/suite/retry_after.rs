@@ -275,6 +275,138 @@ async fn wait_for_turn_completion(test: &TestCodex) {
     assert_eq!(completed.error, None, "turn should complete successfully");
 }
 
+#[test_case::test_case(false, "server_is_overloaded"; "sse_overload")]
+#[test_case::test_case(false, "rate_limit_exceeded"; "sse_rate_limit")]
+#[test_case::test_case(true, "server_is_overloaded"; "http_overload")]
+#[test_case::test_case(true, "rate_limit_exceeded"; "http_rate_limit")]
+#[tokio::test(flavor = "current_thread")]
+async fn capacity_recovery_retries_without_advice_or_transport_budget(
+    http: bool,
+    code: &str,
+) -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    let server = responses::start_mock_server().await;
+    let failure = if http {
+        ResponseTemplate::new(if code == "rate_limit_exceeded" {
+            429
+        } else {
+            503
+        })
+        .set_body_json(json!({"error": {"code": code}}))
+    } else {
+        responses::sse_response(responses::sse_failed("capacity", code, "temporarily busy"))
+    };
+    let response_mock = responses::mount_response_sequence(
+        &server,
+        vec![
+            failure,
+            responses::sse_response(responses::sse(vec![responses::ev_completed("recovered")])),
+        ],
+    )
+    .await;
+    let test = test_codex()
+        .with_config(|config| {
+            config
+                .features
+                .enable(codex_features::Feature::AutoContinueOnRateLimit);
+            config.model_provider.request_max_retries = Some(0);
+            config.model_provider.stream_max_retries = Some(0);
+        })
+        .build_with_auto_env(&server)
+        .await?;
+    submit_user_input(&test, "keep my original request").await?;
+    let retry = wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::StreamError(_))
+    })
+    .await;
+    let EventMsg::StreamError(retry) = retry else {
+        unreachable!()
+    };
+    assert!(retry.message.contains("Retrying automatically"));
+    wait_for_turn_completion(&test).await;
+    let requests = response_mock.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0].body_json()["input"],
+        requests[1].body_json()["input"]
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn capacity_recovery_can_be_interrupted_during_backoff() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    let server = responses::start_mock_server().await;
+    let response_mock = responses::mount_sse_once(
+        &server,
+        responses::sse_failed("capacity", "server_is_overloaded", "temporarily busy"),
+    )
+    .await;
+    let test = test_codex()
+        .with_config(|config| {
+            config
+                .features
+                .enable(codex_features::Feature::AutoContinueOnRateLimit);
+        })
+        .build_with_auto_env(&server)
+        .await?;
+    submit_user_input(&test, "stop when I interrupt").await?;
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::StreamError(_))
+    })
+    .await;
+    test.codex.submit(Op::Interrupt).await?;
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnAborted(_))
+    })
+    .await;
+    assert_eq!(response_mock.requests().len(), 1);
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn capacity_recovery_retries_headerless_websocket_overload() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    let server = responses::start_websocket_server(vec![
+        vec![
+            vec![
+                responses::ev_response_created("prewarm"),
+                responses::ev_completed("prewarm"),
+            ],
+            vec![json!({
+                "type": "error", "status": 503,
+                "error": {"code": "server_is_overloaded", "message": "temporarily busy"}
+            })],
+        ],
+        vec![vec![
+            responses::ev_response_created("recovered"),
+            responses::ev_completed("recovered"),
+        ]],
+    ])
+    .await;
+    let test = test_codex()
+        .with_config(|config| {
+            config
+                .features
+                .enable(codex_features::Feature::AutoContinueOnRateLimit);
+            config.model_catalog = Some(bundled_models_response().expect("bundled models"));
+            config.model_provider.request_max_retries = Some(0);
+            config.model_provider.stream_max_retries = Some(0);
+        })
+        .build_with_websocket_server(&server)
+        .await?;
+    server.wait_for_request(0, 0).await;
+    submit_user_input(&test, "recover the same websocket turn").await?;
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::StreamError(_))
+    })
+    .await;
+    wait_for_turn_completion(&test).await;
+    assert_eq!(server.connections().iter().map(Vec::len).sum::<usize>(), 3);
+    server.shutdown().await;
+    Ok(())
+}
+
 /// HTTP overloads use server advice within the request and stream retry budgets.
 #[tokio::test(flavor = "current_thread")]
 async fn responses_http_uses_retry_after() -> Result<()> {

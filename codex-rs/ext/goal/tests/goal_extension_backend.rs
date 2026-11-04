@@ -107,6 +107,7 @@ async fn installed_goal_tools_apply_maximum_token_budget() -> anyhow::Result<()>
     let harness = GoalExtensionHarness::new(runtime.clone(), thread_id).await?;
     harness.thread_store.insert(GoalExtensionConfig {
         enabled: true,
+        auto_continue_on_rate_limit: false,
         max_goal_token_budget: Some(100),
     });
     let tools = harness.tools();
@@ -868,6 +869,127 @@ async fn turn_error_blocks_goal() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("goal should exist"))?;
     assert_eq!(codex_state::ThreadGoalStatus::Blocked, goal.status);
     Ok(())
+}
+
+#[tokio::test]
+async fn capacity_error_resumes_the_same_goal_after_backoff() -> anyhow::Result<()> {
+    let runtime = test_runtime().await?;
+    let thread_id = test_thread_id()?;
+    seed_thread_metadata(runtime.as_ref(), thread_id).await?;
+    let harness =
+        GoalExtensionHarness::with_capacity_recovery(runtime.clone(), thread_id, true).await?;
+    harness
+        .start_turn("capacity-turn", &TokenUsage::default())
+        .await;
+    tool_by_name(&harness.tools(), "create_goal")
+        .handle(tool_call(
+            "create_goal",
+            "create-capacity-goal",
+            json!({"objective": "finish after capacity returns", "token_budget": 100}),
+        ))
+        .await?;
+    let before = runtime
+        .thread_goals()
+        .get_thread_goal(thread_id)
+        .await?
+        .unwrap();
+    harness
+        .notify_turn_error("capacity-turn", CodexErr::ServerOverloaded)
+        .await;
+    harness.stop_turn("capacity-turn").await;
+    assert_eq!(
+        runtime
+            .thread_goals()
+            .get_thread_goal(thread_id)
+            .await?
+            .unwrap()
+            .status,
+        codex_state::ThreadGoalStatus::Blocked
+    );
+    tokio::time::sleep(Duration::from_millis(5200)).await;
+    let after = runtime
+        .thread_goals()
+        .get_thread_goal(thread_id)
+        .await?
+        .unwrap();
+    assert_eq!(after.status, codex_state::ThreadGoalStatus::Active);
+    assert_eq!(after.goal_id, before.goal_id);
+    assert_eq!(after.objective, before.objective);
+    assert_eq!(after.token_budget, before.token_budget);
+    assert_eq!(after.tokens_used, before.tokens_used);
+    Ok(())
+}
+
+#[tokio::test]
+async fn capacity_recovery_preserves_user_changes_and_unloaded_threads() -> anyhow::Result<()> {
+    let mut cases = Vec::new();
+    for (index, status) in [
+        ThreadGoalStatus::Paused,
+        ThreadGoalStatus::Blocked,
+        ThreadGoalStatus::Complete,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let runtime = test_runtime().await?;
+        let thread_id = test_thread_id()?;
+        seed_thread_metadata(runtime.as_ref(), thread_id).await?;
+        let harness =
+            GoalExtensionHarness::with_capacity_recovery(runtime.clone(), thread_id, true).await?;
+        harness
+            .start_turn("capacity-turn", &TokenUsage::default())
+            .await;
+        tool_by_name(&harness.tools(), "create_goal")
+            .handle(tool_call(
+                "create_goal",
+                "create-capacity-goal",
+                json!({"objective": "respect user changes"}),
+            ))
+            .await?;
+        harness
+            .notify_turn_error("capacity-turn", CodexErr::ServerOverloaded)
+            .await;
+        harness.stop_turn("capacity-turn").await;
+        let outcome = harness
+            .goal_service
+            .set_thread_goal(
+                runtime.as_ref(),
+                GoalSetRequest {
+                    thread_id,
+                    objective: GoalObjectiveUpdate::Set("user changed this goal"),
+                    status: Some(status),
+                    token_budget: GoalTokenBudgetUpdate::Keep,
+                    max_goal_token_budget: None,
+                },
+                async { Ok(()) },
+            )
+            .await?;
+        outcome.apply_runtime_effects(&harness.goal_service).await;
+        if index == 1 {
+            harness.stop_thread().await;
+        }
+        cases.push((runtime, thread_id, harness, status));
+    }
+    tokio::time::sleep(Duration::from_millis(5200)).await;
+    for (runtime, thread_id, _harness, status) in cases {
+        let goal = runtime
+            .thread_goals()
+            .get_thread_goal(thread_id)
+            .await?
+            .unwrap();
+        assert_eq!(protocol_goal_status(goal.status), status);
+        assert_eq!(goal.objective, "user changed this goal");
+    }
+    Ok(())
+}
+
+fn protocol_goal_status(status: codex_state::ThreadGoalStatus) -> ThreadGoalStatus {
+    match status {
+        codex_state::ThreadGoalStatus::Paused => ThreadGoalStatus::Paused,
+        codex_state::ThreadGoalStatus::Blocked => ThreadGoalStatus::Blocked,
+        codex_state::ThreadGoalStatus::Complete => ThreadGoalStatus::Complete,
+        _ => panic!("unexpected resumed goal status: {status:?}"),
+    }
 }
 
 #[tokio::test]
@@ -1664,6 +1786,7 @@ async fn installed_tools_with_start(
         goal_service,
         |_| GoalExtensionConfig {
             enabled: true,
+            auto_continue_on_rate_limit: false,
             max_goal_token_budget: None,
         },
     );
@@ -1709,6 +1832,14 @@ impl GoalExtensionHarness {
         runtime: Arc<codex_state::StateRuntime>,
         thread_id: ThreadId,
     ) -> anyhow::Result<Self> {
+        Self::with_capacity_recovery(runtime, thread_id, false).await
+    }
+
+    async fn with_capacity_recovery(
+        runtime: Arc<codex_state::StateRuntime>,
+        thread_id: ThreadId,
+        auto_continue_on_rate_limit: bool,
+    ) -> anyhow::Result<Self> {
         let sink = Arc::new(RecordingEventSink::default());
         let mut builder = ExtensionRegistryBuilder::<()>::with_event_sink(sink.clone());
         let goal_service = Arc::new(GoalService::new());
@@ -1719,8 +1850,9 @@ impl GoalExtensionHarness {
             /*metrics_client*/ None,
             Weak::new(),
             Arc::clone(&goal_service),
-            |_| GoalExtensionConfig {
+            move |_| GoalExtensionConfig {
                 enabled: true,
+                auto_continue_on_rate_limit,
                 max_goal_token_budget: None,
             },
         );
