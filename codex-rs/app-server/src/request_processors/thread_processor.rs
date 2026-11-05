@@ -912,7 +912,10 @@ impl ThreadRequestProcessor {
         params: codex_app_server_protocol::ThreadCheckpointParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
         let (_, thread) = self.load_thread(&params.thread_id).await?;
-        ensure_direct_input_allowed(thread.as_ref()).await?;
+        // Status only reads the sidecar; context and checkpoint mutations remain parent-owned.
+        if params.action != "status" {
+            ensure_direct_input_allowed(thread.as_ref()).await?;
+        }
         let result = thread
             .checkpoint(&params.action, params.name.as_deref())
             .await

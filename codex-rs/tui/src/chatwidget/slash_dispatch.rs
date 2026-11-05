@@ -1288,6 +1288,7 @@ impl ChatWidget {
             worktrees_enabled: self.local_worktree_operations,
             allow_elevate_sandbox,
             side_conversation_active: self.active_side_conversation,
+            blocks_direct_input: self.blocks_direct_input,
         }
     }
 
