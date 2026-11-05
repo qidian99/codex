@@ -20,3 +20,13 @@ Billing and usage limits, policy denials, budget exhaustion, invalid requests,
 and explicit interruptions do not trigger capacity recovery.
 
 Set the feature to `false` to retain the upstream bounded retry policy.
+
+File creation and upload confirmation also recover automatically from temporary
+connection failures, interrupted response bodies, HTTP 408/429, and transient
+server errors. These requests retry their current stage with a five-second
+initial backoff, jitter, and a one-minute cap, respecting longer server advice.
+Confirmation retries retain the existing file ID and do not upload the bytes
+again. Creation retries retain their JSON body and idempotency key. Cancelling
+the calling operation cancels its request and retry wait. Authentication,
+quota, network-policy and invalid-request errors remain terminal. File control
+request recovery is independent of the Responses stream retry budget.
