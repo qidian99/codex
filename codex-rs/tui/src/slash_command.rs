@@ -39,6 +39,11 @@ pub enum SlashCommand {
     App,
     Init,
     Compact,
+    #[strum(to_string = "cp", serialize = "listcp")]
+    Cp,
+    Usecp,
+    Rmcp,
+    Rmallcp,
     Config,
     Recap,
     Plan,
@@ -92,6 +97,10 @@ impl SlashCommand {
     /// User-visible description shown in the popup.
     pub fn description(self) -> &'static str {
         match self {
+            SlashCommand::Cp => "manage checkpoints, or /cp NAME to save one",
+            SlashCommand::Usecp => "continue from a checkpoint, keeping displayed messages",
+            SlashCommand::Rmcp => "delete a named conversation checkpoint",
+            SlashCommand::Rmallcp => "delete all checkpoints for this session",
             SlashCommand::Config => "configure Codex preferences",
             SlashCommand::Feedback => "send logs to maintainers",
             SlashCommand::New => "start a new chat during a conversation",
@@ -172,7 +181,11 @@ impl SlashCommand {
     pub fn supports_inline_args(self) -> bool {
         matches!(
             self,
-            SlashCommand::Review
+            SlashCommand::Cp
+                | SlashCommand::Usecp
+                | SlashCommand::Rmcp
+                | SlashCommand::Rmallcp
+                | SlashCommand::Review
                 | SlashCommand::Model
                 | SlashCommand::Permissions
                 | SlashCommand::Title
@@ -253,6 +266,10 @@ impl SlashCommand {
             | SlashCommand::Fork
             | SlashCommand::Worktree
             | SlashCommand::Init
+            | SlashCommand::Cp
+            | SlashCommand::Usecp
+            | SlashCommand::Rmcp
+            | SlashCommand::Rmallcp
             | SlashCommand::Compact
             | SlashCommand::Recap
             | SlashCommand::Export

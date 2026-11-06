@@ -828,6 +828,75 @@ impl App {
                 );
                 Ok(true)
             }
+            AppCommand::SteerWithdraw { client_id } => {
+                let request = ClientRequest::ThreadSteerWithdraw {
+                    request_id: codex_app_server_protocol::RequestId::String(
+                        uuid::Uuid::new_v4().to_string(),
+                    ),
+                    params: codex_app_server_protocol::ThreadSteerWithdrawParams {
+                        thread_id: thread_id.to_string(),
+                        client_id: client_id.clone(),
+                    },
+                };
+                match app_server
+                    .request_handle()
+                    .request_typed::<codex_app_server_protocol::ThreadSteerWithdrawResponse>(
+                        request,
+                    )
+                    .await
+                {
+                    Ok(response) => self
+                        .chat_widget
+                        .finish_steer_withdraw(client_id, response.withdrawn),
+                    Err(error) => self
+                        .chat_widget
+                        .add_error_message(format!("Could not withdraw steer: {error:#}")),
+                }
+                Ok(true)
+            }
+            AppCommand::ImagePreupload { path } => {
+                let handle = app_server.request_handle();
+                let path = path.clone();
+                tokio::spawn(async move {
+                    let request = ClientRequest::ThreadImagePreupload {
+                        request_id: codex_app_server_protocol::RequestId::String(
+                            uuid::Uuid::new_v4().to_string(),
+                        ),
+                        params: codex_app_server_protocol::ThreadImagePreuploadParams {
+                            thread_id: thread_id.to_string(),
+                            path,
+                        },
+                    };
+                    let result = handle
+                        .request_typed::<codex_app_server_protocol::ThreadImagePreuploadResponse>(
+                            request,
+                        )
+                        .await;
+                    if let Err(error) = result {
+                        tracing::debug!(%error, "draft image preupload request failed");
+                    }
+                });
+                Ok(true)
+            }
+            AppCommand::Checkpoint {
+                action,
+                name,
+                prompt,
+            } => {
+                if action == "menu" {
+                    if let Some(name) = name {
+                        self.chat_widget.show_checkpoint_actions(name);
+                    }
+                    return Ok(true);
+                }
+                // User commands and resume-time status queries must never unwind the TUI loop.
+                let result = app_server
+                    .thread_checkpoint(thread_id, action.clone(), name.clone())
+                    .await;
+                self.chat_widget
+                    .handle_checkpoint_result(action, prompt.as_deref(), result);
+                Ok(true)
+            }
             AppCommand::Compact => {
                 app_server.thread_compact_start(thread_id).await?;
                 Ok(true)

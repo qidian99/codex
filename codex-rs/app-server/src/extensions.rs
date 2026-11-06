@@ -94,6 +94,9 @@ pub(crate) fn thread_extensions(
             goal_service,
             |config: &Config| GoalExtensionConfig {
                 enabled: config.features.enabled(codex_features::Feature::Goals),
+                auto_continue_on_rate_limit: config
+                    .features
+                    .enabled(codex_features::Feature::AutoContinueOnRateLimit),
                 max_goal_token_budget: config.max_goal_token_budget,
             },
         );

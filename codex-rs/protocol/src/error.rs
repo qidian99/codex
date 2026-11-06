@@ -242,6 +242,20 @@ pub enum CodexErrorDetails {
     EnvVar(EnvVarError),
 }
 
+impl CodexErrorDetails {
+    /// Temporary provider congestion, distinct from exhausted usage, billing, or policy limits.
+    pub fn is_transient_capacity_error(&self) -> bool {
+        match self {
+            Self::ServerOverloaded
+            | Self::PolicyCapacityUnavailable
+            | Self::RateLimitExceeded(_) => true,
+            Self::RetryLimit(error) => error.status == StatusCode::TOO_MANY_REQUESTS,
+            Self::UnexpectedStatus(error) => error.status == StatusCode::TOO_MANY_REQUESTS,
+            _ => false,
+        }
+    }
+}
+
 impl From<&CodexErr> for CodexErrKind {
     fn from(error: &CodexErr) -> Self {
         error.details().into()

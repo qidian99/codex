@@ -6,8 +6,10 @@ use crate::AuthProvider;
 use bytes::Bytes;
 use codex_http_client::HttpResponse;
 use codex_http_client::RequestBuilder;
+use codex_http_client::RetryAfter;
 use codex_http_client::RouteAwareClientPool;
 use codex_http_client::RouteAwareRequestError;
+use codex_http_client::RouteFailureClass;
 use futures::Stream;
 use http::HeaderMap;
 use http::Method;
@@ -21,6 +23,7 @@ pub const OPENAI_FILE_URI_PREFIX: &str = "sediment://";
 pub const OPENAI_FILE_UPLOAD_LIMIT_BYTES: u64 = 512 * 1024 * 1024;
 
 const OPENAI_FILE_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+const MAX_FILE_REQUEST_RETRY_DELAY: Duration = Duration::from_secs(60);
 const OPENAI_FILE_BLOB_UPLOAD_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const MAX_BLOB_UPLOAD_ATTEMPTS: u64 = 5;
 const OPENAI_FILE_FINALIZE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -61,6 +64,12 @@ pub enum OpenAiFileError {
     },
     #[error("failed to send OpenAI file request to {url}: {source}")]
     Request {
+        url: String,
+        #[source]
+        source: RouteAwareRequestError,
+    },
+    #[error("failed to read OpenAI file response from {url}: {source}")]
+    ResponseBody {
         url: String,
         #[source]
         source: RouteAwareRequestError,
@@ -158,7 +167,6 @@ where
         "file_size": file_size_bytes,
         "use_case": OPENAI_FILE_USE_CASE,
     });
-    let request = authorized_request(client_pool, auth, Method::POST, &create_url).await?;
     let mut create_request = match hosted_upload {
         Some(context) => serde_json::json!({
             "file_name": file_name.as_str(),
@@ -173,29 +181,17 @@ where
     if let Some(thread_id) = hosted_upload.and_then(|context| context.thread_id.as_ref()) {
         create_request["codex_thread_id"] = serde_json::Value::String(thread_id.clone());
     }
-    let create_response = request
-        .json(&create_request)
-        .send()
-        .await
-        .map_err(|source| OpenAiFileError::Request {
-            url: create_url.clone(),
-            source,
-        })?;
-    let create_status = create_response.status();
-    let create_body = create_response
-        .text()
-        .await
-        .map_err(|source| OpenAiFileError::Request {
-            url: create_url.clone(),
-            source,
-        })?;
-    if !create_status.is_success() {
-        return Err(OpenAiFileError::UnexpectedStatus {
-            url: create_url,
-            status: create_status,
-            body: create_body,
-        });
-    }
+    // Keep the key stable when a response is lost after the server accepted the POST.
+    let create_idempotency_key = Uuid::new_v4().to_string();
+    let create_body = send_file_json_request(
+        client_pool,
+        auth,
+        &create_url,
+        &create_request,
+        "create",
+        Some(&create_idempotency_key),
+    )
+    .await?;
     let create_payload: CreateFileResponse =
         serde_json::from_str(&create_body).map_err(|source| OpenAiFileError::Decode {
             url: create_url.clone(),
@@ -376,33 +372,18 @@ where
     } else {
         finalize_request
     };
-    let finalize_started_at = Instant::now();
+    // Bound processing polls without charging network outages to that budget.
+    let mut finalize_retry_wait = Duration::ZERO;
     loop {
-        let finalize_response = authorized_request(client_pool, auth, Method::POST, &finalize_url)
-            .await?
-            .json(&finalize_request)
-            .send()
-            .await
-            .map_err(|source| OpenAiFileError::Request {
-                url: finalize_url.clone(),
-                source,
-            })?;
-        let finalize_status = finalize_response.status();
-        let finalize_body =
-            finalize_response
-                .text()
-                .await
-                .map_err(|source| OpenAiFileError::Request {
-                    url: finalize_url.clone(),
-                    source,
-                })?;
-        if !finalize_status.is_success() {
-            return Err(OpenAiFileError::UnexpectedStatus {
-                url: finalize_url.clone(),
-                status: finalize_status,
-                body: finalize_body,
-            });
-        }
+        let finalize_body = send_file_json_request(
+            client_pool,
+            auth,
+            &finalize_url,
+            &finalize_request,
+            "finalize",
+            None,
+        )
+        .await?;
         let finalize_payload: DownloadLinkResponse =
             serde_json::from_str(&finalize_body).map_err(|source| OpenAiFileError::Decode {
                 url: finalize_url.clone(),
@@ -427,12 +408,13 @@ where
                 });
             }
             "retry" => {
-                if finalize_started_at.elapsed() >= OPENAI_FILE_FINALIZE_TIMEOUT {
+                if finalize_retry_wait >= OPENAI_FILE_FINALIZE_TIMEOUT {
                     return Err(OpenAiFileError::UploadNotReady {
                         file_id: create_payload.file_id,
                     });
                 }
                 tokio::time::sleep(OPENAI_FILE_FINALIZE_RETRY_DELAY).await;
+                finalize_retry_wait += OPENAI_FILE_FINALIZE_RETRY_DELAY;
             }
             _ => {
                 return Err(OpenAiFileError::UploadFailed {
@@ -443,6 +425,144 @@ where
                 });
             }
         }
+    }
+}
+
+/// Retry the current control request, preserving completed upload stages. Dropping the
+/// caller's future cancels both an in-flight request and its backoff; no task is detached.
+async fn send_file_json_request(
+    client_pool: &RouteAwareClientPool,
+    auth: &dyn AuthProvider,
+    url: &str,
+    body: &serde_json::Value,
+    stage: &'static str,
+    idempotency_key: Option<&str>,
+) -> Result<String, OpenAiFileError> {
+    let mut attempt = 0_u64;
+    loop {
+        attempt = attempt.saturating_add(1);
+        let mut request = authorized_request(client_pool, auth, Method::POST, url)
+            .await?
+            .json(body);
+        if let Some(key) = idempotency_key {
+            request = request.header("Idempotency-Key", key);
+        }
+        let mut advice = None;
+        let mut status = None;
+        let result = async {
+            let response = request
+                .send()
+                .await
+                .map_err(|source| OpenAiFileError::Request {
+                    url: url.to_string(),
+                    source,
+                })?;
+            let response_status = response.status();
+            status = Some(response_status.as_u16());
+            // Capture the deadline before reading the body so slow reads do not extend advice.
+            advice = blob_retry_after(response.headers()).and_then(RetryAfter::from_delay);
+            let body = response
+                .text()
+                .await
+                .map_err(|source| OpenAiFileError::ResponseBody {
+                    url: url.to_string(),
+                    source,
+                })?;
+            if response_status.is_success() {
+                Ok(body)
+            } else {
+                Err(OpenAiFileError::UnexpectedStatus {
+                    url: url.to_string(),
+                    status: response_status,
+                    body,
+                })
+            }
+        }
+        .await;
+        let error = match result {
+            Ok(body) => {
+                if attempt > 1 {
+                    tracing::event!(
+                        target: "codex_otel.log_only",
+                        tracing::Level::INFO,
+                        event.name = "codex.openai_file_request_recovered",
+                        stage, attempt,
+                        "OpenAI file request recovered"
+                    );
+                }
+                return Ok(body);
+            }
+            Err(error) => error,
+        };
+        if !retryable_file_request_error(&error) {
+            return Err(error);
+        }
+        let now = Instant::now();
+        let local_delay = codex_client::backoff(Duration::from_secs(5), attempt.min(5))
+            .min(MAX_FILE_REQUEST_RETRY_DELAY);
+        let retry_at = advice
+            .map(RetryAfter::deadline)
+            .unwrap_or(now)
+            .max(now + local_delay);
+        tracing::event!(
+            target: "codex_otel.log_only",
+            tracing::Level::WARN,
+            event.name = "codex.openai_file_request_retry",
+            stage, attempt, status,
+            delay_ms = retry_at.saturating_duration_since(now).as_millis(),
+            "OpenAI file request failed temporarily; retrying automatically"
+        );
+        tokio::time::sleep_until(retry_at).await;
+    }
+}
+
+fn retryable_file_request_error(error: &OpenAiFileError) -> bool {
+    match error {
+        // Response::text can wrap an interrupted HTTP body as a decode error. JSON
+        // parsing happens separately; policy revocation must still stop the request.
+        OpenAiFileError::ResponseBody { source, .. } => matches!(
+            source,
+            RouteAwareRequestError::Request(_) | RouteAwareRequestError::Timeout
+        ),
+        OpenAiFileError::Request { source, .. } => match source.failure_class() {
+            Some(
+                RouteFailureClass::TlsError
+                | RouteFailureClass::InvalidProxyConfig
+                | RouteFailureClass::ProxyAuthenticationRequired,
+            ) => false,
+            Some(RouteFailureClass::ProxyResolutionUnavailable) => true,
+            _ => {
+                !source.is_builder()
+                    && (source.is_timeout()
+                        || source.is_connect()
+                        || source.is_body()
+                        || source.is_request())
+            }
+        },
+        OpenAiFileError::UnexpectedStatus { status, body, .. } => {
+            if *status == StatusCode::TOO_MANY_REQUESTS {
+                // Reuse the Responses classifier so quota/billing failures stay terminal.
+                crate::map_api_error(crate::ApiError::Transport(crate::TransportError::Http {
+                    status: *status,
+                    url: None,
+                    headers: None,
+                    body: Some(body.clone()),
+                    retry_after: None,
+                }))
+                .details()
+                .is_transient_capacity_error()
+            } else {
+                matches!(
+                    *status,
+                    StatusCode::REQUEST_TIMEOUT
+                        | StatusCode::INTERNAL_SERVER_ERROR
+                        | StatusCode::BAD_GATEWAY
+                        | StatusCode::SERVICE_UNAVAILABLE
+                        | StatusCode::GATEWAY_TIMEOUT
+                )
+            }
+        }
+        _ => false,
     }
 }
 
@@ -492,6 +612,10 @@ fn blob_retry_after(headers: &http::HeaderMap) -> Option<Duration> {
 #[cfg(test)]
 #[path = "files_retry_tests.rs"]
 mod retry_tests;
+
+#[cfg(test)]
+#[path = "files_control_retry_tests.rs"]
+mod control_retry_tests;
 
 #[cfg(test)]
 mod tests {
@@ -901,11 +1025,12 @@ mod tests {
 
     #[tokio::test]
     async fn upload_openai_file_reports_blob_transport_diagnostics_without_sas() {
-        let upload_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
+        // Reserve without listening so another parallel fixture cannot reuse the port.
+        let upload_socket = tokio::net::TcpSocket::new_v4().expect("create upload socket");
+        upload_socket
+            .bind("127.0.0.1:0".parse().unwrap())
             .expect("bind upload address");
-        let upload_address = upload_listener.local_addr().expect("upload address");
-        drop(upload_listener);
+        let upload_address = upload_socket.local_addr().expect("upload address");
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/backend-api/files"))
@@ -929,8 +1054,11 @@ mod tests {
         .expect_err("blob transport failure should be returned");
 
         let message = error.to_string();
-        assert!(message.contains("failed after"));
-        assert!(message.contains("(connect,"), "{message}");
+        assert!(message.contains("failed after"), "{message}");
+        assert!(
+            message.contains("(connect,") || message.contains("(timeout,"),
+            "{message}"
+        );
         assert!(message.contains("azure_client_request_id="));
         assert!(!message.contains("sig=secret"));
     }

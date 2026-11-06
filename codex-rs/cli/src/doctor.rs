@@ -2507,6 +2507,7 @@ fn websocket_error_detail(err: &ApiError) -> String {
         }
         ApiError::Api { status, .. } => format!("handshake API error: {status} [redacted]"),
         ApiError::Stream(_) => "handshake stream error: [redacted]".to_string(),
+        ApiError::WebsocketRequestTooLarge { .. } => "websocket request too large".to_string(),
         ApiError::ResponseIncomplete(_) => {
             "handshake error: incomplete response: [redacted]".to_string()
         }

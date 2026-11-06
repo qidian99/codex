@@ -218,8 +218,12 @@ impl ChatWidget {
                 if self.submit_op(AppCommand::interrupt()) {
                     self.pause_active_goal_for_interrupt();
                 }
-            } else {
+            } else if self.pending_image_submission.is_some() {
                 self.cancel_image_submission();
+            } else if let Some(pending) = self.input_queue.pending_steers.back() {
+                self.submit_op(AppCommand::SteerWithdraw {
+                    client_id: pending.client_id.clone(),
+                });
             }
             return KeyEventAction::None;
         }
@@ -300,7 +304,9 @@ impl ChatWidget {
 
         if key_event.kind == KeyEventKind::Press
             && self.chat_keymap.edit_queued_message.is_pressed(key_event)
-            && (self.has_queued_follow_up_messages() || self.pending_image_submission.is_some())
+            && (self.has_queued_follow_up_messages()
+                || self.pending_image_submission.is_some()
+                || !self.input_queue.pending_steers.is_empty())
             && self.bottom_pane.no_modal_or_popup_active()
         {
             if let Some(composer) = self.pop_latest_queued_composer_state() {
@@ -308,8 +314,12 @@ impl ChatWidget {
                 self.refresh_startup_recovery();
                 self.refresh_pending_input_preview();
                 self.request_redraw();
-            } else {
+            } else if self.pending_image_submission.is_some() {
                 self.cancel_image_submission();
+            } else if let Some(pending) = self.input_queue.pending_steers.back() {
+                self.submit_op(AppCommand::SteerWithdraw {
+                    client_id: pending.client_id.clone(),
+                });
             }
             return KeyEventAction::None;
         }
@@ -653,6 +663,17 @@ impl ChatWidget {
     /// When the double-press quit shortcut is enabled, pressing the same shortcut again before
     /// expiry requests a shutdown-first quit.
     pub(super) fn on_ctrl_c(&mut self) {
+        if self.frozen_checkpoint.is_some()
+            && !self.is_cancellable_work_active()
+            && self.bottom_pane.no_modal_or_popup_active()
+        {
+            self.submit_op(AppCommand::Checkpoint {
+                action: "unfreeze".to_string(),
+                name: None,
+                prompt: None,
+            });
+            return;
+        }
         let key = key_hint::ctrl(KeyCode::Char('c'));
         let modal_or_popup_active = !self.bottom_pane.no_modal_or_popup_active();
         let should_pause_active_goal = self
@@ -771,7 +792,7 @@ impl ChatWidget {
     }
 
     // Review mode counts as cancellable work so Ctrl+C interrupts instead of quitting.
-    fn is_cancellable_work_active(&self) -> bool {
+    pub(super) fn is_cancellable_work_active(&self) -> bool {
         self.bottom_pane.is_task_running() || self.review.is_review_mode
     }
 

@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::Weak;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use codex_core::StartIfIdleSubmission;
 use codex_core::ThreadManager;
@@ -32,6 +33,7 @@ pub struct GoalRuntimeHandle {
 pub(crate) struct GoalRuntimeConfig {
     pub(crate) analytics: GoalAnalytics,
     pub(crate) enabled: bool,
+    pub(crate) auto_continue_on_rate_limit: bool,
     pub(crate) tools_available_for_thread: bool,
     pub(crate) tools_visible_for_thread: bool,
     pub(crate) root_accounting_state: Option<Arc<GoalAccountingState>>,
@@ -39,6 +41,7 @@ pub(crate) struct GoalRuntimeConfig {
 
 pub(crate) enum ActiveGoalStopReason {
     TurnError,
+    CapacityUnavailable,
     UsageLimit,
     ExecutionUnavailable { expected_goal_id: String },
     EmptyResponse,
@@ -54,6 +57,7 @@ struct GoalRuntimeInner {
     accounting_state: Arc<GoalAccountingState>,
     root_accounting_state: Option<Arc<GoalAccountingState>>,
     enabled: AtomicBool,
+    auto_continue_on_rate_limit: AtomicBool,
     tools_available_for_thread: bool,
     tools_visible_for_thread: bool,
     goal_state_lock: Semaphore,
@@ -108,6 +112,7 @@ impl GoalRuntimeHandle {
                 accounting_state,
                 root_accounting_state: config.root_accounting_state,
                 enabled: AtomicBool::new(config.enabled),
+                auto_continue_on_rate_limit: AtomicBool::new(config.auto_continue_on_rate_limit),
                 tools_available_for_thread: config.tools_available_for_thread,
                 tools_visible_for_thread: config.tools_visible_for_thread,
                 goal_state_lock: Semaphore::new(/*permits*/ 1),
@@ -117,6 +122,18 @@ impl GoalRuntimeHandle {
 
     pub(crate) fn set_enabled(&self, enabled: bool) {
         self.inner.enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    pub(crate) fn set_auto_continue_on_rate_limit(&self, enabled: bool) {
+        self.inner
+            .auto_continue_on_rate_limit
+            .store(enabled, Ordering::Relaxed);
+    }
+
+    pub(crate) fn auto_continue_on_rate_limit(&self) -> bool {
+        self.inner
+            .auto_continue_on_rate_limit
+            .load(Ordering::Relaxed)
     }
 
     pub(crate) fn is_enabled(&self) -> bool {
@@ -312,10 +329,16 @@ impl GoalRuntimeHandle {
             return Ok(());
         }
 
+        let resume_capacity = matches!(reason, ActiveGoalStopReason::CapacityUnavailable);
         let (event_name, status, expected_goal_id) = match reason {
             ActiveGoalStopReason::TurnError => {
                 ("turn-error", codex_state::ThreadGoalStatus::Blocked, None)
             }
+            ActiveGoalStopReason::CapacityUnavailable => (
+                "capacity-unavailable",
+                codex_state::ThreadGoalStatus::Blocked,
+                None,
+            ),
             ActiveGoalStopReason::UsageLimit => (
                 "usage-limit",
                 codex_state::ThreadGoalStatus::UsageLimited,
@@ -400,13 +423,77 @@ impl GoalRuntimeHandle {
             GoalEventAttribution::Turn(turn_id),
         );
         self.inner.accounting_state.clear_active_goal();
+        let resume_goal = resume_capacity.then(|| goal.clone());
         let goal = protocol_goal_from_state(goal);
         self.inner.event_emitter.thread_goal_updated(
             format!("{turn_id}:{event_name}"),
             Some(turn_id.to_string()),
             goal,
         );
+        if let Some(goal) = resume_goal {
+            let runtime = self.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                if let Err(err) = runtime.resume_after_capacity_error(goal).await {
+                    tracing::warn!("failed to resume goal after capacity error: {err}");
+                }
+            });
+        }
         Ok(())
+    }
+
+    /// Uses the same status/runtime transition as an explicit goal resume. Comparing the
+    /// entire stopped snapshot prevents a delayed retry from undoing a user mutation.
+    async fn resume_after_capacity_error(
+        &self,
+        stopped_goal: codex_state::ThreadGoal,
+    ) -> Result<(), String> {
+        let permit = self.goal_state_permit().await?;
+        if !self.is_enabled()
+            || !self.auto_continue_on_rate_limit()
+            || self.inner.accounting_state.current_turn_id().is_some()
+            || self.inner.accounting_state.interrupted_turn_id().is_some()
+        {
+            return Ok(());
+        }
+        let current = self
+            .inner
+            .state_dbs
+            .thread_goals()
+            .get_thread_goal(self.thread_id())
+            .await
+            .map_err(|err| err.to_string())?;
+        if current.as_ref() != Some(&stopped_goal)
+            || stopped_goal.status != codex_state::ThreadGoalStatus::Blocked
+        {
+            return Ok(());
+        }
+        let previous = PreviousGoalSnapshot::from(&stopped_goal);
+        let Some(goal) = self
+            .inner
+            .state_dbs
+            .thread_goals()
+            .update_thread_goal(
+                self.thread_id(),
+                codex_state::GoalUpdate {
+                    objective: None,
+                    status: Some(codex_state::ThreadGoalStatus::Active),
+                    token_budget: None,
+                    expected_goal_id: Some(stopped_goal.goal_id),
+                },
+            )
+            .await
+            .map_err(|err| err.to_string())?
+        else {
+            return Ok(());
+        };
+        self.inner.event_emitter.thread_goal_updated(
+            format!("{}:capacity-resume", goal.goal_id),
+            None,
+            protocol_goal_from_state(goal.clone()),
+        );
+        drop(permit);
+        self.apply_external_goal_set(goal, Some(previous)).await
     }
 
     pub async fn restore_after_resume(&self) -> Result<(), String> {

@@ -329,6 +329,20 @@ fn delete_rollout_path(store: &LocalThreadStore, rollout_path: &Path) -> ThreadS
         Ok(true) | Err(_) => Err(err),
     })?;
     validated_rollout_file_name(&canonical_rollout_path, rollout_path)?;
+    let checkpoint_path = codex_rollout::plain_rollout_path(&canonical_rollout_path)
+        .with_extension("checkpoints.json");
+    match std::fs::remove_file(&checkpoint_path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == ErrorKind::NotFound => {}
+        Err(err) => {
+            return Err(ThreadStoreError::Internal {
+                message: format!(
+                    "failed to delete checkpoints `{}`: {err}",
+                    checkpoint_path.display()
+                ),
+            });
+        }
+    }
     match std::fs::remove_file(&canonical_rollout_path) {
         Ok(()) => Ok(true),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),
@@ -386,6 +400,8 @@ mod tests {
         ];
 
         for (uuid, path) in cases {
+            let checkpoints = path.with_extension("checkpoints.json");
+            std::fs::write(&checkpoints, "checkpoint state").expect("checkpoint sidecar");
             let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
             store
                 .delete_thread(DeleteThreadParams { thread_id })
@@ -393,6 +409,7 @@ mod tests {
                 .expect("delete thread");
 
             assert!(!path.exists());
+            assert!(!checkpoints.exists());
         }
         assert!(!compressed_path.exists());
     }

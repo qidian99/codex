@@ -309,6 +309,7 @@ mod hook_lifecycle;
 mod hooks;
 mod interaction;
 pub(crate) use interaction::KeyEventAction;
+mod checkpoints;
 mod skills;
 mod slash_command_args;
 mod slash_dispatch;
@@ -689,6 +690,7 @@ pub(crate) struct ChatWidget {
     thread_name: Option<String>,
     thread_rename_block_message: Option<String>,
     active_side_conversation: bool,
+    frozen_checkpoint: Option<String>,
     blocks_direct_input: bool,
     external_writer_view: bool,
     provider_error: Option<codex_app_server_protocol::ModelProviderError>,

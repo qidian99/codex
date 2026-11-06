@@ -2992,11 +2992,20 @@ fn selected_and_resumed_threads_use_server_capability_for_v1_and_v2_children() -
                 normalize_snapshot_paths(render_bottom_popup(&app.chat_widget, /*width*/ 80))
             );
             let saved_message = format!("Saved work from child-{index}");
+            let mut checkpoint_status_requested = false;
             while let Ok(event) = app_event_rx.try_recv() {
+                checkpoint_status_requested |= matches!(
+                    &event,
+                    AppEvent::CodexOp(Op::Checkpoint { action, .. }) if action == "status"
+                );
                 if let AppEvent::InsertHistoryCell(cell) = event {
                     app.transcript_cells.push(Arc::from(cell));
                 }
             }
+            assert_eq!(
+                checkpoint_status_requested,
+                multi_agent_version == MultiAgentVersion::V1,
+            );
             assert!(
                 app.render_transcript_lines_for_reflow(/*width*/ 80)
                     .lines
@@ -3030,11 +3039,20 @@ fn selected_and_resumed_threads_use_server_capability_for_v1_and_v2_children() -
                 app_server.thread_read(child_thread_id, /*include_turns*/ false).await?.status,
                 codex_app_server_protocol::ThreadStatus::NotLoaded
             ));
+            let mut checkpoint_status_requested = false;
             while let Ok(event) = app_event_rx.try_recv() {
+                checkpoint_status_requested |= matches!(
+                    &event,
+                    AppEvent::CodexOp(Op::Checkpoint { action, .. }) if action == "status"
+                );
                 if let AppEvent::InsertHistoryCell(cell) = event {
                     app.transcript_cells.push(Arc::from(cell));
                 }
             }
+            assert_eq!(
+                checkpoint_status_requested,
+                multi_agent_version == MultiAgentVersion::V1,
+            );
             assert!(
                 app.render_transcript_lines_for_reflow(/*width*/ 80)
                     .lines
@@ -3113,7 +3131,38 @@ fn selected_and_resumed_threads_use_server_capability_for_v1_and_v2_children() -
             /*initial_user_message*/ None,
         )
         .await?;
-        while app_event_rx.try_recv().is_ok() {}
+        while let Ok(event) = app_event_rx.try_recv() {
+            assert!(!matches!(event, AppEvent::CodexOp(Op::Checkpoint { .. })));
+        }
+
+        // Read-only status remains available to clients; context writes remain parent-owned.
+        let status = app_server
+            .thread_checkpoint(child_thread_ids[1], "status".to_string(), None)
+            .await?;
+        assert_eq!(status.frozen, None);
+        for action in ["save", "use"] {
+            let result = app_server
+                .request_handle()
+                .request_typed::<codex_app_server_protocol::ThreadCheckpointResponse>(
+                    ClientRequest::ThreadCheckpoint {
+                        request_id: AppServerRequestId::String(uuid::Uuid::new_v4().to_string()),
+                        params: codex_app_server_protocol::ThreadCheckpointParams {
+                            thread_id: child_thread_ids[1].to_string(),
+                            action: action.to_string(),
+                            name: Some("blocked".to_string()),
+                        },
+                    },
+                )
+                .await;
+            let Err(TypedRequestError::Server { source, .. }) = result else {
+                panic!("checkpoint {action} should be rejected, got {result:?}");
+            };
+            assert_eq!(source.code, -32600);
+            assert_eq!(
+                source.message,
+                "direct app-server input is not allowed for multi-agent v2 sub-agents",
+            );
+        }
         app.chat_widget
             .restore_user_message_to_composer("direct resume stays view-only".into());
         let draft = app.chat_widget.composer_text_with_pending();

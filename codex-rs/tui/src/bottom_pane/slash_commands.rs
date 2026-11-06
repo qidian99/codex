@@ -66,6 +66,7 @@ pub(crate) struct BuiltinCommandFlags {
     pub(crate) worktrees_enabled: bool,
     pub(crate) allow_elevate_sandbox: bool,
     pub(crate) side_conversation_active: bool,
+    pub(crate) blocks_direct_input: bool,
 }
 
 /// Return the built-ins that should be visible/usable for the current input.
@@ -84,6 +85,16 @@ pub(crate) fn builtins_for_input(flags: BuiltinCommandFlags) -> Vec<(&'static st
             flags.daybreak_command_description.is_some() || *cmd != SlashCommand::Daybreak
         })
         .filter(|(_, cmd)| !flags.side_conversation_active || cmd.available_in_side_conversation())
+        .filter(|(_, cmd)| {
+            !flags.blocks_direct_input
+                || !matches!(
+                    cmd,
+                    SlashCommand::Cp
+                        | SlashCommand::Usecp
+                        | SlashCommand::Rmcp
+                        | SlashCommand::Rmallcp
+                )
+        })
         .collect()
 }
 
@@ -190,6 +201,7 @@ mod tests {
             worktrees_enabled: true,
             allow_elevate_sandbox: true,
             side_conversation_active: false,
+            blocks_direct_input: false,
         }
     }
 

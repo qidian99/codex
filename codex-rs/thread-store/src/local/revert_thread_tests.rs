@@ -69,6 +69,12 @@ async fn revert_keeps_thread_id_and_hides_suffix_across_repeated_reverts() {
         /*new_thread_memory_mode*/ None,
     )
     .await;
+    let checkpoint_path = original_path.with_extension("checkpoints.json");
+    std::fs::write(
+        &checkpoint_path,
+        r#"{"version":1,"checkpoints":{"a":{}},"future_field":true}"#,
+    )
+    .unwrap();
     compress_rollout(original_path.as_path());
 
     store
@@ -86,6 +92,14 @@ async fn revert_keeps_thread_id_and_hides_suffix_across_repeated_reverts() {
         .expect("thread metadata")
         .rollout_path;
     assert_ne!(first_replacement_path, original_path);
+    assert!(
+        !checkpoint_path.exists(),
+        "do not accumulate obsolete sidecars"
+    );
+    assert_eq!(
+        std::fs::read_to_string(first_replacement_path.with_extension("checkpoints.json")).unwrap(),
+        r#"{"version":1,"checkpoints":{"a":{}},"future_field":true}"#,
+    );
     assert_ne!(
         codex_rollout::rollout_id_from_path(first_replacement_path.as_path()),
         Some(thread_id)

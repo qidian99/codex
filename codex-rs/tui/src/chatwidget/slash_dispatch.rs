@@ -341,6 +341,9 @@ impl ChatWidget {
                 const INIT_PROMPT: &str = include_str!("../../assets/prompt_for_init_command.md");
                 self.submit_user_message(INIT_PROMPT.to_string().into());
             }
+            SlashCommand::Cp | SlashCommand::Usecp | SlashCommand::Rmcp | SlashCommand::Rmallcp => {
+                self.dispatch_checkpoint_command(cmd, "");
+            }
             SlashCommand::Compact => {
                 if self.blocks_direct_input {
                     self.add_error_message(PARENT_OWNED_INPUT_MESSAGE.to_string());
@@ -923,6 +926,9 @@ impl ChatWidget {
                 }
                 _ => self.add_error_message(RAW_USAGE.to_string()),
             },
+            SlashCommand::Cp | SlashCommand::Usecp | SlashCommand::Rmcp | SlashCommand::Rmallcp => {
+                self.dispatch_checkpoint_command(cmd, trimmed);
+            }
             SlashCommand::Rename if !trimmed.is_empty() => {
                 if !self.ensure_thread_rename_allowed() {
                     return;
@@ -1282,6 +1288,7 @@ impl ChatWidget {
             worktrees_enabled: self.local_worktree_operations,
             allow_elevate_sandbox,
             side_conversation_active: self.active_side_conversation,
+            blocks_direct_input: self.blocks_direct_input,
         }
     }
 
@@ -1298,6 +1305,9 @@ impl ChatWidget {
             return QueueDrain::Stop;
         }
         match cmd {
+            SlashCommand::Cp | SlashCommand::Usecp | SlashCommand::Rmcp | SlashCommand::Rmallcp => {
+                QueueDrain::Continue
+            }
             SlashCommand::Ide
             | SlashCommand::Status
             | SlashCommand::Daemon
@@ -1425,5 +1435,61 @@ impl ChatWidget {
         ));
         self.bottom_pane.drain_pending_submission_state();
         false
+    }
+}
+
+impl ChatWidget {
+    pub(super) fn dispatch_checkpoint_command(&mut self, command: SlashCommand, name: &str) {
+        if self.blocks_direct_input {
+            self.add_error_message(PARENT_OWNED_INPUT_MESSAGE.to_string());
+            return;
+        }
+        if self.bottom_pane.is_task_running() {
+            self.add_error_message(
+                "Wait for the current turn to finish before managing checkpoints.".to_string(),
+            );
+            return;
+        }
+        let args = name.trim();
+        if command == SlashCommand::Rmallcp && !args.is_empty() {
+            self.add_error_message("Usage: /rmallcp".to_string());
+            return;
+        }
+        let (action, name, prompt) = match command {
+            SlashCommand::Cp if args.is_empty() => ("list", None, None),
+            SlashCommand::Cp => ("save", Some(args.to_string()), None),
+            SlashCommand::Usecp if args.is_empty() => ("list", None, None),
+            SlashCommand::Usecp => {
+                let (name, prompt) = args
+                    .split_once(char::is_whitespace)
+                    .map_or((args, ""), |(name, prompt)| (name, prompt.trim()));
+                let (action, name) = name
+                    .strip_suffix('!')
+                    .map_or(("use", name), |name| ("freeze", name));
+                if name.is_empty() {
+                    self.add_error_message("Usage: /usecp NAME[!] [question]".to_string());
+                    return;
+                }
+                (
+                    action,
+                    Some(name.to_string()),
+                    (!prompt.is_empty()).then(|| prompt.to_string()),
+                )
+            }
+            SlashCommand::Rmcp => ("remove", (!args.is_empty()).then(|| args.to_string()), None),
+            SlashCommand::Rmallcp => ("clear", None, None),
+            _ => return,
+        };
+        self.submit_op(AppCommand::Checkpoint {
+            action: action.to_string(),
+            name,
+            prompt,
+        });
+    }
+}
+
+impl ChatWidget {
+    pub(crate) fn set_frozen_checkpoint(&mut self, checkpoint: Option<String>) {
+        self.frozen_checkpoint = checkpoint;
     }
 }

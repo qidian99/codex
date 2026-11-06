@@ -1093,6 +1093,12 @@
             "image_detail_original": {
               "type": "boolean"
             },
+            "image_file_preupload": {
+              "type": "boolean"
+            },
+            "image_file_uploads": {
+              "type": "boolean"
+            },
             "image_generation": {
               "type": "boolean"
             },
@@ -8107,6 +8113,12 @@
           "type": "boolean"
         },
         "image_detail_original": {
+          "type": "boolean"
+        },
+        "image_file_preupload": {
+          "type": "boolean"
+        },
+        "image_file_uploads": {
           "type": "boolean"
         },
         "image_generation": {

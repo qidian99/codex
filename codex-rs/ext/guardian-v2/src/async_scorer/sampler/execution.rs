@@ -153,6 +153,7 @@ impl SamplingExecution {
                     | TransportError::Policy(_),
                 )
                 | ApiError::ContextWindowExceeded
+                | ApiError::WebsocketRequestTooLarge { .. }
                 | ApiError::ResponseIncomplete(_)
                 | ApiError::QuotaExceeded
                 | ApiError::UsageNotIncluded

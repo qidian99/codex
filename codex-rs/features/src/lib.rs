@@ -115,6 +115,10 @@ pub enum Feature {
     ShellTool,
     /// Enable the built-in local image viewer.
     ViewImage,
+    /// Upload ChatGPT input images once and reuse account-scoped file IDs.
+    ImageFileUploads,
+    /// Pre-upload pasted images while the user is composing.
+    ImageFilePreupload,
     /// Allow registration of the built-in sleep tool.
     SleepTool,
     /// Enable Claude-style lifecycle hooks loaded from hooks.json files.
@@ -235,6 +239,8 @@ pub enum Feature {
     EnableRequestCompression,
     /// Keep active sampling turns alive until a failed network connection recovers.
     UnboundedConnectionRetries,
+    /// Retry transient capacity failures and resume goals stopped by those failures.
+    AutoContinueOnRateLimit,
     /// Start the managed network proxy for sandboxed sessions.
     NetworkProxy,
     /// Mask credentials and inject them through an already enabled network proxy.
@@ -1175,6 +1181,18 @@ pub const FEATURES: &[FeatureSpec] = &[
         default_enabled: true,
     },
     FeatureSpec {
+        id: Feature::ImageFilePreupload,
+        key: "image_file_preupload",
+        stage: Stage::Stable,
+        default_enabled: true,
+    },
+    FeatureSpec {
+        id: Feature::ImageFileUploads,
+        key: "image_file_uploads",
+        stage: Stage::Stable,
+        default_enabled: true,
+    },
+    FeatureSpec {
         id: Feature::ViewImage,
         key: "view_image",
         stage: Stage::Stable,
@@ -1591,6 +1609,12 @@ pub const FEATURES: &[FeatureSpec] = &[
         key: "unbounded_connection_retries",
         stage: Stage::Stable,
         default_enabled: true,
+    },
+    FeatureSpec {
+        id: Feature::AutoContinueOnRateLimit,
+        key: "auto_continue_on_rate_limit",
+        stage: Stage::Stable,
+        default_enabled: false,
     },
     FeatureSpec {
         id: Feature::NetworkProxy,

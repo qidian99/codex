@@ -53,6 +53,7 @@ use crate::tool::GoalToolExecutor;
 #[derive(Clone, Debug)]
 pub struct GoalExtensionConfig {
     pub enabled: bool,
+    pub auto_continue_on_rate_limit: bool,
     pub max_goal_token_budget: Option<i64>,
 }
 
@@ -103,6 +104,7 @@ where
         Box::pin(async move {
             let config = (self.goal_config)(input.config);
             let enabled = config.enabled;
+            let auto_continue_on_rate_limit = config.auto_continue_on_rate_limit;
             let tools_visible_for_thread = !matches!(
                 input.session_source,
                 SessionSource::SubAgent(SubAgentSource::Review)
@@ -151,6 +153,7 @@ where
                     GoalRuntimeConfig {
                         analytics: self.analytics.clone(),
                         enabled,
+                        auto_continue_on_rate_limit,
                         tools_available_for_thread,
                         tools_visible_for_thread,
                         root_accounting_state,
@@ -158,6 +161,7 @@ where
                 )
             });
             runtime.set_enabled(enabled);
+            runtime.set_auto_continue_on_rate_limit(auto_continue_on_rate_limit);
             self.goal_service.register_runtime(&runtime);
         })
     }
@@ -205,6 +209,7 @@ where
     fn on_thread_stop<'a>(&'a self, input: ThreadStopInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
             if let Some(runtime) = goal_runtime_handle(input.thread_store) {
+                runtime.set_enabled(false);
                 self.goal_service.unregister_runtime(&runtime);
             }
         })
@@ -224,9 +229,11 @@ where
     ) {
         let config = (self.goal_config)(new_config);
         let enabled = config.enabled;
+        let auto_continue_on_rate_limit = config.auto_continue_on_rate_limit;
         thread_store.insert(config);
         if let Some(runtime) = goal_runtime_handle(thread_store) {
             runtime.set_enabled(enabled);
+            runtime.set_auto_continue_on_rate_limit(auto_continue_on_rate_limit);
         }
     }
 }
@@ -428,6 +435,11 @@ where
 
             let reason = match input.error {
                 CodexErrorInfo::UsageLimitExceeded => ActiveGoalStopReason::UsageLimit,
+                _ if runtime.auto_continue_on_rate_limit()
+                    && input.error_details.is_transient_capacity_error() =>
+                {
+                    ActiveGoalStopReason::CapacityUnavailable
+                }
                 // The turn has ended because the error was non-retryable or its
                 // retries were exhausted. Block the goal to prevent automatic
                 // continuation from looping and consuming tokens, as can happen

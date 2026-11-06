@@ -300,6 +300,7 @@
 //! edits and renders a placeholder prompt instead of the editable textarea. This is part of the
 //! overall state machine, since it affects which transitions are even possible from a given UI
 //! state.
+//! Parent-owned sub-agents retain local navigation commands but hide checkpoint controls.
 //!
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
@@ -1909,11 +1910,14 @@ impl ChatComposer {
         }
     }
 
-    /// Insert an attachment placeholder and track it for the next submission.
+    /// Insert an attachment placeholder, begin best-effort pre-upload, and track it for submission.
     pub fn attach_image(&mut self, path: PathBuf) {
         self.dismiss_sparkle();
         let started_vim_edit = self.begin_direct_vim_edit();
         let elements_before = self.draft.textarea.element_payloads();
+        self.app_event_tx.send(AppEvent::CodexOp(
+            crate::app_command::AppCommand::ImagePreupload { path: path.clone() },
+        ));
         self.attachments
             .attach_image(&mut self.draft.textarea, path);
         self.reconcile_deleted_elements(elements_before);
@@ -5151,6 +5155,33 @@ mod tests {
             /*enhanced_keys_supported*/ false,
             ChatComposer::set_parent_owned_thread,
         );
+    }
+
+    #[test]
+    fn parent_owned_thread_hides_checkpoint_controls() {
+        let (mut composer, _rx) = new_test_composer();
+        for parent_owned in [false, true] {
+            if parent_owned {
+                composer.set_parent_owned_thread();
+            }
+            let input = composer.slash_input();
+            let popup = input.command_popup("/");
+            for command in [
+                SlashCommand::Cp,
+                SlashCommand::Usecp,
+                SlashCommand::Rmcp,
+                SlashCommand::Rmallcp,
+            ] {
+                assert_eq!(input.command(command.command()).is_none(), parent_owned);
+                assert_eq!(
+                    popup
+                        .filtered_items()
+                        .contains(&CommandItem::Builtin(command)),
+                    !parent_owned,
+                );
+            }
+            assert!(input.command("status").is_some());
+        }
     }
 
     #[test]

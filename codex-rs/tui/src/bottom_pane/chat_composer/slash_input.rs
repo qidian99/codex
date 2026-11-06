@@ -182,6 +182,7 @@ impl<'a> SlashInput<'a> {
                 worktrees_enabled: self.command_flags.worktrees_enabled,
                 windows_degraded_sandbox_active: self.command_flags.allow_elevate_sandbox,
                 side_conversation_active: self.command_flags.side_conversation_active,
+                blocks_direct_input: self.command_flags.blocks_direct_input,
             },
             self.service_tier_commands.to_vec(),
         );
@@ -221,6 +222,7 @@ impl ChatComposer {
             worktrees_enabled: self.worktrees_enabled,
             allow_elevate_sandbox: self.windows_degraded_sandbox_active,
             side_conversation_active: self.side_conversation_active,
+            blocks_direct_input: self.blocks_direct_input,
         }
     }
 
